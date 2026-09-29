@@ -1,0 +1,16 @@
+{
+    "version":  "1.0.0",
+    "types":  "src/index.ts",
+    "type":  "module",
+    "name":  "@paytrack/shared",
+    "private":  true,
+    "scripts":  {
+                    "test":  "vitest run",
+                    "typecheck":  "tsc --noEmit"
+                },
+    "devDependencies":  {
+                            "vitest":  "^3.2.4",
+                            "typescript":  "~5.9.3"
+                        },
+    "main":  "src/index.ts"
+}
