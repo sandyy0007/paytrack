@@ -112,7 +112,7 @@ describe('buildUpiPaymentUri', () => {
 
   it('builds from parsed payload + chosen amount', () => {
     expect(buildUpiPaymentUri(p2p, { amountPaise: 85000 })).toBe(
-      'upi://pay?pa=rahul%40upi&pn=Rahul%20Sharma&am=850.00&cu=INR',
+      'upi://pay?pa=rahul@upi&pn=Rahul%20Sharma&am=850.00&cu=INR',
     );
   });
 
@@ -140,14 +140,56 @@ describe('buildUpiPaymentUri', () => {
 });
 
 describe('parseUpiAppResponse', () => {
-  it('parses success hint', () => {
+  it('parses success hint and extracts 12-digit UTR', () => {
     const r = parseUpiAppResponse('txnId=AXI123&responseCode=00&Status=SUCCESS&txnRef=PT1&ApprovalRefNo=627012345678');
     expect(r?.status).toBe('SUCCESS');
     expect(r?.approvalRefNo).toBe('627012345678');
+    expect(r?.utr).toBe('627012345678');
+    expect(r?.txnId).toBe('AXI123');
+    expect(r?.txnRef).toBe('PT1');
+    expect(r?.responseCode).toBe('00');
   });
+
+  it('does not mislabel non-12-digit approval ref as UTR', () => {
+    const r = parseUpiAppResponse('txnId=TXN123&Status=SUCCESS&ApprovalRefNo=ABC456');
+    expect(r?.approvalRefNo).toBe('ABC456');
+    expect(r?.utr).toBeUndefined();
+    expect(r?.txnId).toBe('TXN123');
+  });
+
   it('handles empty / junk', () => {
     expect(parseUpiAppResponse('')).toBeNull();
     expect(parseUpiAppResponse(undefined)).toBeNull();
     expect(parseUpiAppResponse('Status=weird')?.status).toBe('UNKNOWN');
+  });
+
+  it('parses bundle / record object from Android Intent extra', () => {
+    const r = parseUpiAppResponse({
+      Status: 'SUCCESS',
+      txnId: 'PTM999888',
+      ApprovalRefNo: '423456789012',
+      responseCode: '00',
+    });
+    expect(r?.status).toBe('SUCCESS');
+    expect(r?.txnId).toBe('PTM999888');
+    expect(r?.utr).toBe('423456789012');
+  });
+
+  it('parses response from uri string with scheme or path', () => {
+    const r = parseUpiAppResponse('paytrack://upi-return?Status=SUCCESS&txnId=UPI111&ApprovalRefNo=123456789012');
+    expect(r?.status).toBe('SUCCESS');
+    expect(r?.txnId).toBe('UPI111');
+    expect(r?.utr).toBe('123456789012');
+  });
+
+  it('strips offline camera QR mode=01 and mode=02 from intent URI', () => {
+    const r = parseUpiQr('upi://pay?pa=paytmqr6ohg0f@ptyes&pn=PRADEEP%20KUSHWAH&mc=5499&mode=02&orgid=000000');
+    if (!r.ok) throw new Error();
+    const uri = buildUpiPaymentUri(r.payload, { amountPaise: 2000 });
+    expect(uri).toContain('pa=paytmqr6ohg0f@ptyes');
+    expect(uri).toContain('pn=PRADEEP%20KUSHWAH');
+    expect(uri).not.toContain('mode=02');
+    expect(uri).not.toContain('orgid=000000');
+    expect(uri).toContain('am=20.00');
   });
 });

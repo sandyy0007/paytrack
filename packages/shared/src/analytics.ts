@@ -14,6 +14,8 @@ export interface AnalyticsExpense {
   upiId: string | null;
   expenseDate: string; // ISO
   deletedAt?: string | null;
+  reason?: string | null;
+  mode?: string | null;
 }
 
 const DAY = 86_400_000;
@@ -193,3 +195,268 @@ export function spentInPeriod(
     )
     .reduce((s, e) => s + e.amountPaise, 0);
 }
+
+/* ----------------------- Feature 8: Payment DNA -------------------------- */
+
+export interface PaymentDna {
+  averagePaymentPaise: number;
+  largestPaymentPaise: number;
+  mostFrequentPayee: { name: string; count: number } | null;
+  mostFrequentCategory: { name: string; count: number } | null;
+  mostActiveDayOfWeek: { day: string; count: number } | null; // e.g. "Saturday"
+  smallPaymentsCount: number; // <= ₹200 (20,000 paise)
+  largePaymentsCount: number; // >= ₹2,000 (200,000 paise)
+  totalPaidCount: number;
+  totalSpentPaise: number;
+}
+
+const DAYS_OF_WEEK = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+/** Calculates private spending DNA strictly from PAID transactions. */
+export function calculatePaymentDna(expenses: AnalyticsExpense[]): PaymentDna {
+  const paid = expenses.filter((e) => !e.deletedAt && e.status === 'PAID');
+  if (paid.length === 0) {
+    return {
+      averagePaymentPaise: 0,
+      largestPaymentPaise: 0,
+      mostFrequentPayee: null,
+      mostFrequentCategory: null,
+      mostActiveDayOfWeek: null,
+      smallPaymentsCount: 0,
+      largePaymentsCount: 0,
+      totalPaidCount: 0,
+      totalSpentPaise: 0,
+    };
+  }
+
+  let totalPaise = 0;
+  let largestPaise = 0;
+  let smallCount = 0;
+  let largeCount = 0;
+
+  const payeeCounts = new Map<string, number>();
+  const categoryCounts = new Map<string, number>();
+  const dayOfWeekCounts: number[] = [0, 0, 0, 0, 0, 0, 0];
+
+  for (const e of paid) {
+    const a = e.amountPaise;
+    totalPaise += a;
+    if (a > largestPaise) largestPaise = a;
+    if (a <= 20_000) smallCount++; // <= ₹200
+    if (a >= 200_000) largeCount++; // >= ₹2000
+
+    const pk = e.payeeName || e.upiId;
+    if (pk) {
+      payeeCounts.set(pk, (payeeCounts.get(pk) ?? 0) + 1);
+    }
+    categoryCounts.set(e.category, (categoryCounts.get(e.category) ?? 0) + 1);
+
+    const d = new Date(e.expenseDate);
+    const dayIdx = d.getDay();
+    if (!Number.isNaN(dayIdx) && dayIdx >= 0 && dayIdx < 7) {
+      dayOfWeekCounts[dayIdx] = (dayOfWeekCounts[dayIdx] ?? 0) + 1;
+    }
+  }
+
+  let topPayee: { name: string; count: number } | null = null;
+  for (const [name, count] of payeeCounts.entries()) {
+    if (!topPayee || count > topPayee.count) {
+      topPayee = { name, count };
+    }
+  }
+
+  let topCat: { name: string; count: number } | null = null;
+  for (const [name, count] of categoryCounts.entries()) {
+    if (!topCat || count > topCat.count) {
+      topCat = { name, count };
+    }
+  }
+
+  let maxDayIdx = 0;
+  let maxDayCount = 0;
+  for (let i = 0; i < 7; i++) {
+    const count = dayOfWeekCounts[i] ?? 0;
+    if (count > maxDayCount) {
+      maxDayCount = count;
+      maxDayIdx = i;
+    }
+  }
+
+  return {
+    averagePaymentPaise: Math.round(totalPaise / paid.length),
+    largestPaymentPaise: largestPaise,
+    mostFrequentPayee: topPayee,
+    mostFrequentCategory: topCat,
+    mostActiveDayOfWeek: maxDayCount > 0 ? { day: DAYS_OF_WEEK[maxDayIdx] ?? 'Unknown', count: maxDayCount } : null,
+    smallPaymentsCount: smallCount,
+    largePaymentsCount: largeCount,
+    totalPaidCount: paid.length,
+    totalSpentPaise: totalPaise,
+  };
+}
+
+/* ------------------ Feature 5: Recurring Payee Intelligence --------------- */
+
+export interface RecurringPayeeInfo {
+  upiId: string;
+  payeeName: string | null;
+  count: number;
+  totalPaidPaise: number;
+  averageIntervalDays: number | null;
+  intervalDescription: string | null; // e.g. "~30 days", "~7 days", "Frequent"
+  commonPurpose: string | null;
+  commonCategory: string | null;
+  isRecurring: boolean;
+}
+
+/**
+ * Analyzes historical paid transactions for a given UPI ID to detect
+ * frequency intervals (e.g. "~30 days" for rent/broadband) and common purposes.
+ */
+export function analyzeRecurringPayee(expenses: AnalyticsExpense[], upiId: string): RecurringPayeeInfo | null {
+  if (!upiId) return null;
+  const targetId = upiId.trim().toLowerCase();
+
+  const matching = expenses
+    .filter((e) => !e.deletedAt && e.status === 'PAID' && e.upiId && e.upiId.trim().toLowerCase() === targetId)
+    .sort((a, b) => Date.parse(a.expenseDate) - Date.parse(b.expenseDate));
+
+  if (matching.length === 0) return null;
+
+  let totalPaid = 0;
+  let payeeName: string | null = null;
+  const purposeCounts = new Map<string, number>();
+  const categoryCounts = new Map<string, number>();
+
+  for (const m of matching) {
+    totalPaid += m.amountPaise;
+    if (!payeeName && m.payeeName) payeeName = m.payeeName;
+    if (m.reason) purposeCounts.set(m.reason, (purposeCounts.get(m.reason) ?? 0) + 1);
+    categoryCounts.set(m.category, (categoryCounts.get(m.category) ?? 0) + 1);
+  }
+
+  // Top purpose & category
+  let topPurpose: string | null = null;
+  let topPCount = 0;
+  for (const [p, count] of purposeCounts.entries()) {
+    if (count > topPCount) {
+      topPurpose = p;
+      topPCount = count;
+    }
+  }
+
+  let topCat: string | null = null;
+  let topCCount = 0;
+  for (const [c, count] of categoryCounts.entries()) {
+    if (count > topCCount) {
+      topCat = c;
+      topCCount = count;
+    }
+  }
+
+  // Calculate interval if count >= 2
+  let avgIntervalDays: number | null = null;
+  let intervalDesc: string | null = null;
+  let isRecurring = false;
+
+  if (matching.length >= 2) {
+    const intervals: number[] = [];
+    for (let i = 1; i < matching.length; i++) {
+      const prev = Date.parse(matching[i - 1]?.expenseDate ?? '');
+      const curr = Date.parse(matching[i]?.expenseDate ?? '');
+      if (!Number.isNaN(prev) && !Number.isNaN(curr)) {
+        const diffDays = Math.round((curr - prev) / (1000 * 60 * 60 * 24));
+        if (diffDays > 0) intervals.push(diffDays);
+      }
+    }
+
+    if (intervals.length > 0) {
+      const sum = intervals.reduce((acc, v) => acc + v, 0);
+      avgIntervalDays = Math.round(sum / intervals.length);
+
+      if (avgIntervalDays >= 25 && avgIntervalDays <= 35) {
+        intervalDesc = '~30 days (Monthly)';
+        isRecurring = true;
+      } else if (avgIntervalDays >= 6 && avgIntervalDays <= 8) {
+        intervalDesc = '~7 days (Weekly)';
+        isRecurring = true;
+      } else if (avgIntervalDays <= 2) {
+        intervalDesc = 'Daily / Frequent';
+        isRecurring = matching.length >= 3;
+      } else {
+        intervalDesc = `~${avgIntervalDays} days`;
+        isRecurring = matching.length >= 3;
+      }
+    }
+  }
+
+  return {
+    upiId,
+    payeeName,
+    count: matching.length,
+    totalPaidPaise: totalPaid,
+    averageIntervalDays: avgIntervalDays,
+    intervalDescription: intervalDesc,
+    commonPurpose: topPurpose,
+    commonCategory: topCat,
+    isRecurring,
+  };
+}
+
+/* -------------------- Feature 9: Money Journey --------------------------- */
+
+export interface MoneyJourneyStep {
+  id: string;
+  expenseDate: string;
+  timeFormatted: string;
+  payeeName: string;
+  category: string;
+  amountPaise: number;
+  reason: string;
+  mode?: string | null;
+  cumulativeDayPaise: number;
+}
+
+/** Builds an interactive chronological spending replay timeline. */
+export function buildMoneyJourney(
+  expenses: (AnalyticsExpense & { id?: string })[],
+  selectedDay?: string, // YYYY-MM-DD
+): MoneyJourneyStep[] {
+  const paid = expenses
+    .filter((e) => !e.deletedAt && e.status === 'PAID')
+    .sort((a, b) => Date.parse(a.expenseDate) - Date.parse(b.expenseDate));
+
+  const filtered = selectedDay
+    ? paid.filter((e) => e.expenseDate.startsWith(selectedDay))
+    : paid.slice(-25); // latest 25 payments for journey
+
+  let runningDayTotal = 0;
+  let lastDayKey = '';
+
+  return filtered.map((e, idx) => {
+    const d = new Date(e.expenseDate);
+    const dayKey = d.toISOString().slice(0, 10);
+    if (dayKey !== lastDayKey) {
+      runningDayTotal = 0;
+      lastDayKey = dayKey;
+    }
+    runningDayTotal += e.amountPaise;
+
+    const timeFormatted = Number.isNaN(d.getTime())
+      ? ''
+      : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    return {
+      id: e.id ?? `step-${idx}`,
+      expenseDate: e.expenseDate,
+      timeFormatted,
+      payeeName: e.payeeName || e.upiId || 'Direct Payment',
+      category: e.category,
+      amountPaise: e.amountPaise,
+      reason: e.reason || 'Expense',
+      mode: e.mode ?? null,
+      cumulativeDayPaise: runningDayTotal,
+    };
+  });
+}
+

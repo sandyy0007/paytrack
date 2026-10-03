@@ -263,6 +263,14 @@ export class UpiIntentError extends Error {
   }
 }
 
+function encodeUpiParam(key: string, value: string): string {
+  // Preserve literal '@' in payee address (pa); Android UPI apps and banks reject %40 in VPAs
+  if (key === 'pa') {
+    return `${key}=${value.replace(/[^a-zA-Z0-9.@\-_]/g, (c) => encodeURIComponent(c))}`;
+  }
+  return `${key}=${encodeURIComponent(value)}`;
+}
+
 /**
  * Builds a `upi://pay` URI from a parsed QR and a confirmed amount.
  * Never silently changes a locked/signed amount.
@@ -282,17 +290,29 @@ export function buildUpiPaymentUri(payload: UpiPayload, opts: BuildIntentOptions
 
   const pairs: [string, string][] = [['pa', payload.pa]];
   if (payload.pn) pairs.push(['pn', payload.pn]);
+
   for (const k of PASSTHROUGH_KEYS) {
     const v = payload.params[k];
-    if (v != null && v !== '') pairs.push([k, v]);
+    if (v == null || v === '') continue;
+
+    // Do NOT emit offline camera QR initiation modes (mode=01 or mode=02) into an inter-app VIEW Intent.
+    // NPCI and bank fraud switches reject inter-app intents with offline QR modes as spoofed QR scans.
+    if (k === 'mode' && (v === '01' || v === '02')) continue;
+
+    // In static QRs, strip placeholder orgid tags that trigger unverified merchant intent restrictions
+    if (k === 'orgid' && (v === '000000' || !payload.amountLocked)) continue;
+
+    pairs.push([k, v]);
   }
+
   pairs.push(['am', paiseToDecimalString(amountPaise)]);
   if (payload.minAmountPaise != null) pairs.push(['mam', paiseToDecimalString(payload.minAmountPaise)]);
   pairs.push(['cu', 'INR']);
+
   const tn = payload.note ?? sanitizeText(opts.note, 50);
   if (tn) pairs.push(['tn', tn]);
 
-  return 'upi://pay?' + pairs.map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
+  return 'upi://pay?' + pairs.map(([k, v]) => encodeUpiParam(k, v)).join('&');
 }
 
 /* ------------------------- UPI app response parser ----------------------- */
@@ -303,27 +323,53 @@ export interface UpiAppResponse {
   txnRef?: string;
   approvalRefNo?: string;
   responseCode?: string;
+  utr?: string;
   raw: string;
 }
 
 /**
- * Parses the optional `response` string some UPI apps return to the calling
- * activity (e.g. "txnId=...&responseCode=00&Status=SUCCESS&ApprovalRefNo=...").
- * This is a HINT only — PayTrack still asks the user to confirm.
+ * Parses the response returned by external UPI applications
+ * (e.g. "txnId=...&responseCode=00&Status=SUCCESS&ApprovalRefNo=...").
  */
-export function parseUpiAppResponse(raw: string | null | undefined): UpiAppResponse | null {
-  if (!raw || typeof raw !== 'string') return null;
-  const p = parseQuery(raw);
+export function parseUpiAppResponse(input: string | Record<string, unknown> | null | undefined): UpiAppResponse | null {
+  if (!input) return null;
+
+  let raw = '';
+  let p: Record<string, string> = {};
+
+  if (typeof input === 'string') {
+    raw = input.trim();
+    if (!raw) return null;
+    const queryPart = raw.includes('?') ? raw.slice(raw.indexOf('?') + 1) : raw;
+    p = parseQuery(queryPart);
+  } else if (typeof input === 'object') {
+    if (typeof input.response === 'string') {
+      return parseUpiAppResponse(input.response);
+    }
+    for (const [k, v] of Object.entries(input)) {
+      if (v != null && typeof v !== 'object') {
+        p[k.toLowerCase()] = String(v);
+      }
+    }
+    raw = Object.entries(p).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
+  }
+
   if (Object.keys(p).length === 0) return null;
+
   const s = (p.status ?? '').toUpperCase();
   const status: UpiAppResponse['status'] =
-    s === 'SUCCESS' ? 'SUCCESS' : s === 'FAILURE' || s === 'FAILED' ? 'FAILURE' : s === 'SUBMITTED' ? 'SUBMITTED' : 'UNKNOWN';
+    s === 'SUCCESS' ? 'SUCCESS' : s === 'FAILURE' || s === 'FAILED' || s === 'CANCELLED' ? 'FAILURE' : s === 'SUBMITTED' ? 'SUBMITTED' : 'UNKNOWN';
+
+  const approvalRefNo = p.approvalrefno || p.approvalrefnum || p.approvalref || p.rrn || p.bankref || undefined;
+  const utr = approvalRefNo && /^[0-9]{12}$/.test(approvalRefNo) ? approvalRefNo : undefined;
+
   return {
     status,
-    txnId: p.txnid || undefined,
-    txnRef: p.txnref || undefined,
-    approvalRefNo: p.approvalrefno || undefined,
+    txnId: p.txnid || p.transactionid || p.id || undefined,
+    txnRef: p.txnref || p.transactionref || p.tr || undefined,
+    approvalRefNo,
     responseCode: p.responsecode || undefined,
+    utr,
     raw,
   };
 }

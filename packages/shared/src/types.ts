@@ -2,6 +2,26 @@ import type { ExpenseStatus, PaymentMethod } from './status';
 
 export type QrSource = 'UPI_URI' | 'BHARAT_QR' | 'MANUAL_UPI' | 'NONE';
 
+export type ExpenseMode = 'Personal' | 'College' | 'Project' | 'Travel' | 'Family' | 'Work';
+export const EXPENSE_MODES: readonly ExpenseMode[] = ['Personal', 'College', 'Project', 'Travel', 'Family', 'Work'];
+
+export type ReconciliationStatus = 'MATCHED' | 'AMOUNT_MISMATCH' | 'UNRECONCILED';
+export type ConfidenceLevel = 'HIGH' | 'MEDIUM' | 'LOW';
+
+export interface SplitShare {
+  id: string;
+  personName: string;
+  amountPaise: number;
+  isPaid: boolean;
+  settledAt?: string | null;
+}
+
+export interface SplitData {
+  totalShares: number;
+  shares: SplitShare[];
+  notes?: string;
+}
+
 /** Canonical expense record (camelCase). DB uses snake_case equivalents. */
 export interface Expense {
   id: string; // client-generated UUID (idempotent sync key)
@@ -17,6 +37,11 @@ export interface Expense {
   paymentMethod: PaymentMethod;
   utr: string | null;
   transactionReference: string | null;
+  transactionId?: string | null;
+  approvalReference?: string | null;
+  responseCode?: string | null;
+  originalQrPayloadHash?: string | null;
+  paymentIntentHash?: string | null;
   paymentApp: string | null;
   qrSource: QrSource;
   /** Original QR params (JSON) to rebuild the intent on retry. */
@@ -28,6 +53,16 @@ export interface Expense {
   paymentCompletedAt: string | null;
   updatedAt: string;
   deletedAt: string | null;
+
+  // Master product features: Reconciliation, Intent vs Actual, Confidence, Modes, Splits
+  intendedAmountPaise?: number | null;
+  actualAmountPaise?: number | null;
+  reconciliationStatus?: ReconciliationStatus | null;
+  confidenceLevel?: ConfidenceLevel | null;
+  confidenceReasons?: string[] | null;
+  mode?: ExpenseMode | null;
+  splitData?: SplitData | null;
+  recoveryDismissed?: boolean | null;
 }
 
 export interface ExpenseEvent {

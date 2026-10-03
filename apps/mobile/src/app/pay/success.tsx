@@ -7,6 +7,7 @@ import { PrimaryButton, SecondaryButton } from '@/components/Buttons';
 import { GlassCard } from '@/components/GlassCard';
 import { Screen } from '@/components/Screen';
 import { LoadingState } from '@/components/States';
+import { StatusBadge } from '@/components/StatusBadge';
 import { SuccessCheck } from '@/components/SuccessCheck';
 import { useLiveQuery } from '@/lib/dataVersion';
 import { fmtDate, fmtTime } from '@/lib/format';
@@ -44,25 +45,37 @@ export default function Success() {
     }>
       <View style={{ alignItems: 'center', marginTop: space.lg }}>
         <SuccessCheck />
-        <Animated.Text entering={FadeInDown.delay(300)} style={[type.h1, { marginTop: -space.lg }]} accessibilityRole="header">Payment Recorded</Animated.Text>
+        <Animated.Text entering={FadeInDown.delay(300)} style={[type.h1, { marginTop: -space.lg }]} accessibilityRole="header">
+          Payment Successful
+        </Animated.Text>
         <Animated.View entering={FadeInDown.delay(380)} style={{ marginTop: space.md }}>
           <AmountDisplay paise={e.amountPaise} size="lg" />
         </Animated.View>
       </View>
-      <Animated.View entering={FadeInDown.delay(460)}>
+      <Animated.View entering={FadeInDown.delay(460)} style={{ marginTop: space.md }}>
         <GlassCard padding={space.xl}>
-          <Row k="Paid to" v={e.payeeName ?? e.upiId ?? '—'} />
-          <Row k="For" v={e.reason} />
-          <Row k="UTR" v={e.utr ?? e.transactionReference ?? '—'} />
+          <View style={styles.badgeRow}>
+            <Text style={type.label}>Status</Text>
+            <StatusBadge status={e.status} />
+          </View>
+          <Row k="Payee Name" v={e.payeeName ?? '—'} />
+          <Row k="Payee UPI ID" v={e.upiId ?? '—'} />
+          <Row k="Purpose / Category" v={`${e.reason} (${e.category})`} />
+          {e.transactionId ? <Row k="Transaction ID" v={e.transactionId} /> : null}
+          <Row k="UTR / Ref" v={e.utr ?? e.approvalReference ?? e.transactionReference ?? '—'} />
+          <Row k="Expense ID" v={e.expenseCode} />
           <Row k="Date" v={fmtDate(when)} />
           <Row k="Time" v={fmtTime(when)} />
         </GlassCard>
       </Animated.View>
-      <Text style={[type.caption, { textAlign: 'center', color: colors.textMuted }]}>Recorded from your confirmation and reference. Your analytics are updated.</Text>
+      <Text style={[type.caption, { textAlign: 'center', color: colors.textMuted, marginTop: space.sm }]}>
+        Payment recorded and verified. Your analytics are up to date.
+      </Text>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
   row: { flexDirection: 'row', justifyContent: 'space-between', gap: space.lg, paddingVertical: space.sm },
+  badgeRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: space.sm },
 });

@@ -30,11 +30,22 @@ function waitForForeground(): { promise: Promise<'foreground'>; cancel: () => vo
   return { promise, cancel: () => sub?.remove() };
 }
 
-function extractResponse(extra: unknown): UpiAppResponse | null {
-  if (!extra || typeof extra !== 'object') return null;
-  const e = extra as Record<string, unknown>;
-  const raw = typeof e.response === 'string' ? e.response : typeof e.Status === 'string' ? `Status=${e.Status}` : null;
-  return parseUpiAppResponse(raw);
+function extractResponse(extra: unknown, data?: string | null): UpiAppResponse | null {
+  if (data && typeof data === 'string' && data.length > 0) {
+    const res = parseUpiAppResponse(data);
+    if (res && res.status !== 'UNKNOWN') return res;
+  }
+  if (extra && typeof extra === 'object') {
+    const res = parseUpiAppResponse(extra as Record<string, unknown>);
+    if (res && res.status !== 'UNKNOWN') return res;
+  }
+  if (data && typeof data === 'string' && data.length > 0) {
+    return parseUpiAppResponse(data);
+  }
+  if (extra && typeof extra === 'object') {
+    return parseUpiAppResponse(extra as Record<string, unknown>);
+  }
+  return null;
 }
 
 export async function launchUpiPayment(uri: string, packageName: string | null): Promise<LaunchOutcome> {
@@ -49,7 +60,12 @@ export async function launchUpiPayment(uri: string, packageName: string | null):
       }).then((r) => ({ kind: 'result' as const, r }));
       const winner = await Promise.race([activity, fg.promise.then(() => ({ kind: 'foreground' as const }))]);
       if (winner.kind === 'result') {
-        return { launched: true, returnedVia: 'result', response: extractResponse(winner.r.extra), resultCode: winner.r.resultCode };
+        return {
+          launched: true,
+          returnedVia: 'result',
+          response: extractResponse(winner.r.extra, winner.r.data),
+          resultCode: winner.r.resultCode,
+        };
       }
       return { launched: true, returnedVia: 'foreground', response: null, resultCode: null };
     } catch (e) {

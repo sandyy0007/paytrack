@@ -1,17 +1,19 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
 import { Text, View } from 'react-native';
+import { EXPENSE_MODES } from '@paytrack/shared';
 import { PrimaryButton, SecondaryButton } from '@/components/Buttons';
 import { Icon } from '@/components/Icon';
 import { ConfirmDialog } from '@/components/Overlays';
 import { PaymentSlip } from '@/components/PaymentSlip';
+import { PrePaymentIntelligence } from '@/components/PrePaymentIntelligence';
 import { ScalePressable } from '@/components/ScalePressable';
 import { Screen } from '@/components/Screen';
 import { ErrorState, LoadingState } from '@/components/States';
 import { UpiAppPicker } from '@/components/UpiAppPicker';
 import { useLiveQuery } from '@/lib/dataVersion';
 import { run } from '@/lib/payActions';
-import { getExpense, transition } from '@/lib/repo';
+import { getExpense, setExpenseMode, transition } from '@/lib/repo';
 import { resumeHref } from '@/lib/routes';
 import { useSettings } from '@/lib/settings';
 import { appNameForPackage } from '@/lib/upiLaunch';
@@ -50,7 +52,39 @@ export default function Slip() {
       <View style={{ marginTop: space.sm }}>
         <PaymentSlip data={e} />
       </View>
-      <View style={{ flexDirection: 'row', gap: space.sm, alignItems: 'flex-start', paddingHorizontal: space.xs }}>
+
+      {/* Mode Selector */}
+      <View style={{ gap: space.xs, marginTop: space.sm }}>
+        <Text style={[type.label, { color: colors.textSecondary }]}>Expense Mode</Text>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space.xs }}>
+          {EXPENSE_MODES.map((m) => {
+            const active = (e.mode ?? 'Personal') === m;
+            return (
+              <ScalePressable
+                key={m}
+                onPress={() => setExpenseMode(e.id, m)}
+                style={{
+                  paddingHorizontal: 12,
+                  paddingVertical: 6,
+                  borderRadius: radius.pill,
+                  backgroundColor: active ? colors.primary : colors.bgElevated,
+                  borderWidth: 1,
+                  borderColor: active ? colors.primary : colors.border,
+                }}
+              >
+                <Text style={[type.caption, { color: active ? colors.onPrimary : colors.text, fontWeight: active ? '700' : '500' }]}>
+                  {m}
+                </Text>
+              </ScalePressable>
+            );
+          })}
+        </View>
+      </View>
+
+      {/* Pre-Payment Intelligence Card */}
+      <PrePaymentIntelligence expense={e} />
+
+      <View style={{ flexDirection: 'row', gap: space.sm, alignItems: 'flex-start', paddingHorizontal: space.xs, marginTop: space.sm }}>
         <Icon name="shield-checkmark-outline" size={16} color={colors.textSecondary} />
         <Text style={[type.caption, { flex: 1, color: colors.textSecondary }]}>
           Saved on your device. You'll complete the payment and enter your UPI PIN only inside your UPI app — PayTrack never asks for it.

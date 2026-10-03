@@ -3,7 +3,6 @@
  * the sync engine mirrors it to the backend when a connection is available.
  */
 import * as SQLite from 'expo-sqlite';
-import { Platform } from 'react-native';
 
 let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
 
@@ -87,6 +86,52 @@ const MIGRATIONS: string[] = [
   `,
 ];
 
+/**
+ * Idempotently reconciles the SQLite schema by dynamically inspecting
+ * PRAGMA table_info(expenses) and adding any missing columns.
+ */
+export async function reconcileSchema(db: SQLite.SQLiteDatabase): Promise<void> {
+  const cols = await db.getAllAsync<{ name: string }>('PRAGMA table_info(expenses)');
+  const colNames = new Set(cols.map((c) => c.name.toLowerCase()));
+
+  const requiredColumns: [string, string][] = [
+    ['transaction_id', 'TEXT'],
+    ['transaction_reference', 'TEXT'],
+    ['approval_reference', 'TEXT'],
+    ['response_code', 'TEXT'],
+    ['utr', 'TEXT'],
+    ['original_qr_payload_hash', 'TEXT'],
+    ['payment_intent_hash', 'TEXT'],
+    ['intended_amount_paise', 'INTEGER'],
+    ['actual_amount_paise', 'INTEGER'],
+    ['reconciliation_status', 'TEXT'],
+    ['confidence_level', 'TEXT'],
+    ['confidence_reasons', 'TEXT'],
+    ['mode', 'TEXT DEFAULT "Personal"'],
+    ['split_data', 'TEXT'],
+    ['recovery_dismissed', 'INTEGER DEFAULT 0'],
+  ];
+
+  for (const [col, colType] of requiredColumns) {
+    if (!colNames.has(col.toLowerCase())) {
+      try {
+        await db.execAsync(`ALTER TABLE expenses ADD COLUMN ${col} ${colType};`);
+      } catch {
+        // column may have been added concurrently
+      }
+    }
+  }
+
+  // Create indexes for efficient querying
+  await db.execAsync(`
+    CREATE INDEX IF NOT EXISTS idx_exp_txnid ON expenses (transaction_id);
+    CREATE INDEX IF NOT EXISTS idx_exp_appref ON expenses (approval_reference);
+    CREATE INDEX IF NOT EXISTS idx_exp_date ON expenses (expense_date DESC);
+    CREATE INDEX IF NOT EXISTS idx_exp_status ON expenses (status);
+    CREATE INDEX IF NOT EXISTS idx_exp_mode ON expenses (mode);
+  `);
+}
+
 async function open(): Promise<SQLite.SQLiteDatabase> {
   const db = await SQLite.openDatabaseAsync('paytrack.db', { useNewConnection: true });
   await db.execAsync('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
@@ -100,6 +145,9 @@ async function open(): Promise<SQLite.SQLiteDatabase> {
     v += 1;
     await db.execAsync(`PRAGMA user_version = ${v}`);
   }
+
+  // Reconcile schema dynamically on boot so no missing column errors ever occur
+  await reconcileSchema(db);
   return db;
 }
 
@@ -140,5 +188,3 @@ export async function resetLocalData(): Promise<void> {
     await tx.execAsync('DELETE FROM expense_events; DELETE FROM expenses; DELETE FROM budgets; DELETE FROM categories; DELETE FROM outbox; DELETE FROM kv;');
   });
 }
-
-

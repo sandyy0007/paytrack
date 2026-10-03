@@ -3,7 +3,7 @@
     "name": "PayTrack",
     "slug": "paytrack",
     "scheme": "paytrack",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -14,7 +14,8 @@
       "backgroundColor": "#05070A"
     },
     "android": {
-      "package": "com.paytrack.app",
+      "package": "com.paytrack.expensetracker",
+      "versionCode": 2,
       "adaptiveIcon": {
         "foregroundImage": "./assets/android-icon-foreground.png",
         "monochromeImage": "./assets/android-icon-monochrome.png",

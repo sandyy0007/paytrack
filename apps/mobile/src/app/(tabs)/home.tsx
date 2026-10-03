@@ -1,4 +1,4 @@
-import { formatINR, summarize } from '@paytrack/shared';
+import { EXPENSE_MODES, formatINR, summarize } from '@paytrack/shared';
 import { router } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
@@ -15,7 +15,7 @@ import { TAB_CONTENT_INSET } from '@/components/TabBar';
 import { TransactionCard } from '@/components/TransactionCard';
 import { useLiveQuery } from '@/lib/dataVersion';
 import { fmtDateLong, greeting, tzOffsetMinutes, weekdayLong } from '@/lib/format';
-import { expensesSince, listAttention, listExpenses } from '@/lib/repo';
+import { dismissRecovery, expensesSince, findOpenPaymentSessions, listAttention, listExpenses } from '@/lib/repo';
 import { attentionLabel, resumeHref } from '@/lib/routes';
 import { useSession } from '@/lib/session';
 import { syncNow } from '@/lib/sync';
@@ -38,13 +38,15 @@ function QuickAction({ icon, label, onPress, primary }: { icon: IconName; label:
 export default function Home() {
   const session = useSession((s) => s.session);
   const [refreshing, setRefreshing] = useState(false);
+  const [selectedMode, setSelectedMode] = useState<string>('All');
   const now = new Date();
   const since = new Date(now.getFullYear(), now.getMonth(), 1);
   since.setDate(since.getDate() - 7);
 
   const stats = useLiveQuery(async () => summarize(await expensesSince(since), new Date(), tzOffsetMinutes()));
-  const recent = useLiveQuery(() => listExpenses({ limit: 6 }));
+  const recent = useLiveQuery(() => listExpenses({ limit: 12 }));
   const attention = useLiveQuery(() => listAttention());
+  const openSessions = useLiveQuery(() => findOpenPaymentSessions());
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -55,6 +57,11 @@ export default function Home() {
   const s = stats.data;
   const name = session?.user.name?.split(' ')[0];
   const att = attention.data ?? [];
+  const open = openSessions.data ?? [];
+
+  const displayExpenses = (recent.data ?? []).filter(
+    (e) => selectedMode === 'All' || (e.mode ?? 'Personal') === selectedMode,
+  );
 
   return (
     <Screen bottomInset={TAB_CONTENT_INSET} refreshing={refreshing} onRefresh={onRefresh}>
@@ -100,6 +107,48 @@ export default function Home() {
 
       <SyncBanner />
 
+      {/* Interrupted Payment Recovery Banner */}
+      {open.length > 0 && (
+        <Animated.View entering={FadeInDown.duration(400)}>
+          <GlassCard padding={space.lg} style={{ borderColor: colors.primary, borderWidth: 1 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm, marginBottom: space.xs }}>
+              <Icon name="refresh-circle" size={22} color={colors.primary} />
+              <Text style={[type.h3, { color: colors.primary }]}>Payment Recovery</Text>
+            </View>
+            <Text style={[type.caption, { color: colors.textSecondary, marginBottom: space.sm }]}>
+              An interrupted payment of {formatINR(open[0].amountPaise)} to {open[0].payeeName ?? open[0].upiId} was detected.
+            </Text>
+            <View style={{ flexDirection: 'row', gap: space.sm, marginTop: 4 }}>
+              <ScalePressable
+                onPress={() => router.push(resumeHref(open[0]))}
+                style={{
+                  flex: 1,
+                  backgroundColor: colors.primary,
+                  paddingVertical: 10,
+                  borderRadius: radius.md,
+                  alignItems: 'center',
+                }}
+              >
+                <Text style={[type.caption, { color: colors.onPrimary, fontWeight: '700' }]}>Review / Complete</Text>
+              </ScalePressable>
+              <ScalePressable
+                onPress={() => dismissRecovery(open[0].id)}
+                style={{
+                  paddingVertical: 10,
+                  paddingHorizontal: space.md,
+                  borderRadius: radius.md,
+                  borderWidth: 1,
+                  borderColor: colors.border,
+                  alignItems: 'center',
+                }}
+              >
+                <Text style={[type.caption, { color: colors.textSecondary }]}>Dismiss</Text>
+              </ScalePressable>
+            </View>
+          </GlassCard>
+        </Animated.View>
+      )}
+
       {att.length > 0 && (
         <Animated.View entering={FadeInDown.delay(80).duration(400)}>
           <GlassCard padding={space.lg}>
@@ -121,12 +170,39 @@ export default function Home() {
         </Animated.View>
       )}
 
-      <SectionHeader title="Recent payments" action={recent.data?.length ? 'See all' : undefined} onAction={() => router.push('/activity')} />
+      {/* Mode Filter Selector */}
+      <View style={{ marginTop: space.sm }}>
+        <SectionHeader title="Recent payments" action={recent.data?.length ? 'See all' : undefined} onAction={() => router.push('/activity')} />
+        <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap', marginBottom: space.sm }}>
+          {['All', ...EXPENSE_MODES].map((m) => {
+            const active = selectedMode === m;
+            return (
+              <ScalePressable
+                key={m}
+                onPress={() => setSelectedMode(m)}
+                style={{
+                  paddingHorizontal: 10,
+                  paddingVertical: 5,
+                  borderRadius: radius.pill,
+                  backgroundColor: active ? colors.primary : colors.bgElevated,
+                  borderWidth: 1,
+                  borderColor: active ? colors.primary : colors.border,
+                }}
+              >
+                <Text style={[type.caption, { color: active ? colors.onPrimary : colors.textSecondary, fontWeight: active ? '700' : '400', fontSize: 11 }]}>
+                  {m}
+                </Text>
+              </ScalePressable>
+            );
+          })}
+        </View>
+      </View>
+
       {recent.loading && !recent.data ? (
         <LoadingState rows={3} />
-      ) : recent.data?.length ? (
+      ) : displayExpenses.length ? (
         <View style={{ gap: space.sm }}>
-          {recent.data.map((e, i) => (
+          {displayExpenses.map((e, i) => (
             <Animated.View key={e.id} entering={FadeInDown.delay(60 * i).duration(350)}>
               <TransactionCard expense={e} onPress={() => router.push({ pathname: '/activity/[id]', params: { id: e.id } })} />
             </Animated.View>
@@ -134,7 +210,7 @@ export default function Home() {
         </View>
       ) : (
         <GlassCard>
-          <EmptyState icon="receipt-outline" title="No expenses yet." message="Your first payment will appear here automatically." cta="+ Pay" onCta={() => router.push('/pay')} />
+          <EmptyState icon="receipt-outline" title="No expenses in this mode." message="Expenses recorded in this mode will appear here." cta="+ Pay" onCta={() => router.push('/pay')} />
         </GlassCard>
       )}
     </Screen>

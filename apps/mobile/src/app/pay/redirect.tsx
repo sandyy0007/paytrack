@@ -11,7 +11,7 @@ import { copyText } from '@/lib/clipboard';
 import { haptic } from '@/lib/haptics';
 import { cancelPendingReminder, schedulePendingReminder } from '@/lib/notifications';
 import { buildUriForExpense, run } from '@/lib/payActions';
-import { getExpense, transition, type LocalExpense } from '@/lib/repo';
+import { getExpense, recordFailedPayment, saveSuccessfulPayment, transition, type LocalExpense } from '@/lib/repo';
 import { useSettings } from '@/lib/settings';
 import { appNameForPackage, launchUpiPayment } from '@/lib/upiLaunch';
 import { colors, radius, space, type } from '@/theme/tokens';
@@ -57,10 +57,33 @@ export default function Redirect() {
         const back = await run(() => transition(e.id, 'USER_RETURNED', { meta: { launchFailed: true } }));
         return setPhase({ kind: 'failed', message: outcome.message, expense: back });
       }
+
+      // 1. Direct auto-resolution when UPI app returned SUCCESS
+      if (outcome.response?.status === 'SUCCESS') {
+        void cancelPendingReminder(e.id);
+        void haptic.success();
+        await run(() => saveSuccessfulPayment(e.id, outcome.response, appName));
+        router.replace({ pathname: '/pay/success', params: { id: e.id } });
+        return;
+      }
+
+      // 2. Direct failure handling when UPI app returned FAILURE
+      if (outcome.response?.status === 'FAILURE') {
+        void cancelPendingReminder(e.id);
+        void haptic.warning();
+        await run(() => recordFailedPayment(e.id, outcome.response, appName));
+        router.replace({
+          pathname: '/pay/failure',
+          params: { id: e.id, code: outcome.response.responseCode ?? '' },
+        });
+        return;
+      }
+
+      // 3. Fallback for foreground return / pending SUBMITTED / unconfirmed
       await run(() => transition(e.id, 'USER_RETURNED', {
         meta: { returnedVia: outcome.returnedVia, ...(outcome.response ? { appReportedStatus: outcome.response.status } : {}) },
       }));
-      const ref = outcome.response?.approvalRefNo ?? outcome.response?.txnRef ?? '';
+      const ref = outcome.response?.approvalRefNo ?? outcome.response?.txnRef ?? outcome.response?.txnId ?? '';
       router.replace({ pathname: '/pay/return', params: { id: e.id, hint: outcome.response?.status ?? '', ref } });
     })().catch((err) => setPhase({ kind: 'error', message: String(err?.message ?? err) }));
   }, [id, attempt]);

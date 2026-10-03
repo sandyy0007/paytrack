@@ -1,5 +1,6 @@
 import { secureDelete, secureGet, secureSet } from './secureStorage';
 import { create } from 'zustand';
+import type { ExpenseMode } from '@paytrack/shared';
 
 export interface Settings {
   onboarded: boolean;
@@ -11,6 +12,7 @@ export interface Settings {
   defaultCategory: string | null;
   apiUrlOverride: string | null;
   shareNoteWithPayee: boolean;
+  activeMode: ExpenseMode;
 }
 
 const DEFAULTS: Settings = {
@@ -22,6 +24,7 @@ const DEFAULTS: Settings = {
   defaultCategory: null,
   apiUrlOverride: null,
   shareNoteWithPayee: false,
+  activeMode: 'Personal',
 };
 
 const KEY = 'paytrack.settings.v1';
@@ -49,3 +52,4 @@ export const useSettings = create<SettingsStore>((set, get) => ({
     await secureSet(KEY, JSON.stringify(rest)).catch(() => undefined);
   },
 }));
+

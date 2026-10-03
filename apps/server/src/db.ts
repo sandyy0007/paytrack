@@ -9,20 +9,7 @@ export type Tx = pg.PoolClient;
 export type Queryable = pg.Pool | pg.PoolClient;
 
 export function createPool(url = config.databaseUrl): pg.Pool {
-  const needsSsl =
-    url.includes('sslmode=require') ||
-    url.includes('ssl=true') ||
-    url.includes('render.com') ||
-    url.includes('neon.tech') ||
-    url.includes('supabase.co') ||
-    process.env.DATABASE_SSL === 'true';
-
-  return new pg.Pool({
-    connectionString: url,
-    max: 10,
-    idleTimeoutMillis: 30_000,
-    ssl: needsSsl ? { rejectUnauthorized: false } : undefined,
-  });
+  return new pg.Pool({ connectionString: url, max: 10, idleTimeoutMillis: 30_000 });
 }
 
 export async function withTx<T>(db: pg.Pool, fn: (tx: pg.PoolClient) => Promise<T>): Promise<T> {

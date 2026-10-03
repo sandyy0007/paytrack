@@ -104,11 +104,18 @@ export default function Profile() {
         <SettingsRow icon="download-outline" label="Export data" value="CSV · PDF" onPress={() => router.push('/profile/export')} />
       </SettingsGroup>
 
+      <SettingsGroup title="About & App Info">
+        <SettingsRow icon="information-circle-outline" label="App Version" value="1.0.1 (Latest Build)" />
+        <SettingsRow icon="code-slash-outline" label="Build Identifier" value="20261003-V2-FINAL" />
+        <SettingsRow icon="server-outline" label="Schema Status" value="v2 (Reconciled)" />
+        <SettingsRow icon="bug-outline" label="Diagnostics" value="Open" onPress={() => router.push('/pay/debug')} />
+      </SettingsGroup>
+
       <SettingsGroup>
         <SettingsRow icon="trash-outline" label="Delete account" danger onPress={() => router.push('/profile/security')} />
         <SettingsRow icon="log-out-outline" label={remote ? 'Logout' : 'Reset local profile'} danger onPress={() => setConfirmLogout(true)} />
       </SettingsGroup>
-      <Text style={[type.caption, { textAlign: 'center', color: colors.textMuted }]}>PayTrack 1.0 · Pay First. Track Automatically.</Text>
+      <Text style={[type.caption, { textAlign: 'center', color: colors.textMuted }]}>PayTrack 1.0.1 (20261003-V2-FINAL) · Pay First. Track Automatically.</Text>
 
       <EditProfile key={String(editing)} visible={editing} onClose={() => setEditing(false)} />
       <ConfirmDialog

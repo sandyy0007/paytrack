@@ -5,8 +5,8 @@
  */
 import {
   applyTransition, classifyReference, DEFAULT_CATEGORIES, matchesQuery, needsAttention, statusBucket,
-  type Budget, type BudgetPeriod, type Category, type Expense, type ExpenseEvent, type ExpenseStatus,
-  type PaymentMethod, type QrSource,
+  type Budget, type BudgetPeriod, type Category, type Expense, type ExpenseEvent, type ExpenseMode,
+  type ExpenseStatus, type PaymentMethod, type QrSource, type SplitData,
 } from '@paytrack/shared';
 import { bumpData } from './dataVersion';
 import { getDb, inTx, type Tx } from './db';
@@ -30,6 +30,19 @@ export function rowToExpense(r: Row): LocalExpense {
     qrSource: r.qr_source, qrPayload: r.qr_payload, notes: r.notes, createdAt: r.created_at, expenseDate: r.expense_date,
     paymentInitiatedAt: r.payment_initiated_at, paymentCompletedAt: r.payment_completed_at, updatedAt: r.updated_at,
     deletedAt: r.deleted_at, syncState: r.sync_state, syncError: r.sync_error,
+    transactionId: r.transaction_id ?? null,
+    approvalReference: r.approval_reference ?? null,
+    responseCode: r.response_code ?? null,
+    originalQrPayloadHash: r.original_qr_payload_hash ?? null,
+    paymentIntentHash: r.payment_intent_hash ?? null,
+    intendedAmountPaise: r.intended_amount_paise ?? null,
+    actualAmountPaise: r.actual_amount_paise ?? null,
+    reconciliationStatus: r.reconciliation_status ?? null,
+    confidenceLevel: r.confidence_level ?? null,
+    confidenceReasons: r.confidence_reasons ? (typeof r.confidence_reasons === 'string' ? JSON.parse(r.confidence_reasons) : r.confidence_reasons) : null,
+    mode: (r.mode as ExpenseMode) ?? 'Personal',
+    splitData: r.split_data ? (typeof r.split_data === 'string' ? JSON.parse(r.split_data) : r.split_data) : null,
+    recoveryDismissed: r.recovery_dismissed === 1 || r.recovery_dismissed === true,
   };
 }
 
@@ -71,6 +84,7 @@ export interface NewExpenseInput {
   qrParams: Record<string, string> | null;
   notes?: string | null;
   expenseDate?: string;
+  mode?: ExpenseMode | null;
 }
 
 /**
@@ -84,6 +98,7 @@ export async function createExpense(input: NewExpenseInput): Promise<LocalExpens
   const at = now.toISOString();
   const code = await nextExpenseCode(now);
   const id = uuid();
+  const baseMode = input.mode ?? 'Personal';
   const base: LocalExpense = {
     id, expenseCode: code, userId: null, amountPaise: input.amountPaise, currency: 'INR',
     payeeName: input.payeeName, upiId: input.upiId, reason: input.reason.trim(), category: input.category,
@@ -91,6 +106,8 @@ export async function createExpense(input: NewExpenseInput): Promise<LocalExpens
     qrSource: input.qrSource, qrPayload: input.qrParams ? JSON.stringify(input.qrParams) : null, notes: input.notes ?? null,
     createdAt: at, expenseDate: input.expenseDate ?? at, paymentInitiatedAt: null, paymentCompletedAt: null,
     updatedAt: at, deletedAt: null, syncState: 'pending', syncError: null,
+    mode: baseMode,
+    intendedAmountPaise: input.amountPaise,
   };
   const nextStatus: ExpenseStatus = input.paymentMethod === 'UPI' ? 'PENDING_PAYMENT' : 'PAID';
   const { expense: moved, event } = applyTransition(base, { to: nextStatus, at, eventId: uuid() });
@@ -98,10 +115,10 @@ export async function createExpense(input: NewExpenseInput): Promise<LocalExpens
   await inTx(db, async (tx) => {
     await tx.runAsync(
       `INSERT INTO expenses (id, expense_code, amount_paise, currency, payee_name, upi_id, reason, category, status, payment_method,
-         qr_source, qr_payload, notes, created_at, expense_date, updated_at, payment_completed_at, sync_state)
-       VALUES (?, ?, ?, 'INR', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
+         qr_source, qr_payload, notes, created_at, expense_date, updated_at, payment_completed_at, sync_state, mode, intended_amount_paise)
+       VALUES (?, ?, ?, 'INR', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
       id, code, base.amountPaise, base.payeeName, base.upiId, base.reason, base.category, moved.status, base.paymentMethod,
-      base.qrSource, base.qrPayload, base.notes, at, base.expenseDate, at, moved.paymentCompletedAt,
+      base.qrSource, base.qrPayload, base.notes, at, base.expenseDate, at, moved.paymentCompletedAt, baseMode, input.amountPaise,
     );
     const draftEventId = uuid();
     await insertEvent(tx, { id: draftEventId, expenseId: id, fromStatus: null, toStatus: 'DRAFT', at });
@@ -133,6 +150,9 @@ export interface TransitionOptions {
   reference?: string;
   paymentApp?: string;
   meta?: ExpenseEvent['meta'];
+  transactionId?: string | null;
+  approvalReference?: string | null;
+  responseCode?: string | null;
 }
 
 /** Applies a validated state-machine transition locally and queues it for sync. */
@@ -142,23 +162,231 @@ export async function transition(id: string, to: ExpenseStatus, opts: Transition
   if (!current) throw new Error('Expense not found');
   const at = new Date().toISOString();
   const eventId = uuid();
-  const { expense, event } = applyTransition(current, { to, at, eventId, reference: opts.reference, paymentApp: opts.paymentApp, meta: opts.meta });
+  const { expense, event } = applyTransition(current, {
+    to,
+    at,
+    eventId,
+    reference: opts.reference,
+    paymentApp: opts.paymentApp,
+    meta: opts.meta,
+    transactionId: opts.transactionId ?? null,
+    approvalReference: opts.approvalReference ?? null,
+    responseCode: opts.responseCode ?? null,
+  });
 
   await inTx(db, async (tx) => {
     await tx.runAsync(
       `UPDATE expenses SET status = ?, utr = ?, transaction_reference = ?, payment_app = ?, payment_initiated_at = ?,
-         payment_completed_at = ?, updated_at = ?, sync_state = 'pending' WHERE id = ?`,
+         payment_completed_at = ?, updated_at = ?, transaction_id = ?, approval_reference = ?, response_code = ?, sync_state = 'pending' WHERE id = ?`,
       expense.status, expense.utr, expense.transactionReference, expense.paymentApp, expense.paymentInitiatedAt,
-      expense.paymentCompletedAt, at, id,
+      expense.paymentCompletedAt, at, expense.transactionId ?? null, expense.approvalReference ?? null, expense.responseCode ?? null, id,
     );
     await insertEvent(tx, event);
     await enqueue(tx, 'expense.transition', id, {
-      id, to, at, eventId, ...(opts.reference ? { reference: opts.reference } : {}), ...(opts.paymentApp ? { paymentApp: opts.paymentApp } : {}),
+      id, to, at, eventId,
+      ...(opts.reference ? { reference: opts.reference } : {}),
+      ...(opts.paymentApp ? { paymentApp: opts.paymentApp } : {}),
       ...(opts.meta ? { meta: opts.meta } : {}),
+      ...(opts.transactionId ? { transactionId: opts.transactionId } : {}),
+      ...(opts.approvalReference ? { approvalReference: opts.approvalReference } : {}),
+      ...(opts.responseCode ? { responseCode: opts.responseCode } : {}),
     });
   });
   bumpData();
   return { ...expense, syncState: 'pending', syncError: null };
+}
+
+/** Auto-saves a successful UPI response: SUCCESS_RESPONSE → PAID with zero manual typing required. */
+export async function saveSuccessfulPayment(
+  id: string,
+  response: {
+    status: string;
+    txnId?: string;
+    txnRef?: string;
+    approvalRefNo?: string;
+    responseCode?: string;
+    utr?: string;
+  } | null,
+  paymentApp?: string,
+): Promise<LocalExpense> {
+  const db = await getDb();
+  const current = await getExpense(id);
+  if (!current) throw new Error('Expense not found');
+  if (current.status === 'PAID') return current;
+
+  const at = new Date().toISOString();
+  const transactionId = response?.txnId ?? null;
+  const approvalReference = response?.approvalRefNo ?? null;
+  const responseCode = response?.responseCode ?? '00';
+
+  // Extract UTR if 12-digit numeric, otherwise keep as transaction reference
+  let utr: string | null = null;
+  let transactionReference: string | null = null;
+
+  if (response?.utr && /^[0-9]{12}$/.test(response.utr)) {
+    utr = response.utr;
+  } else if (approvalReference && /^[0-9]{12}$/.test(approvalReference)) {
+    utr = approvalReference;
+  } else if (response?.txnRef) {
+    transactionReference = response.txnRef;
+  } else if (approvalReference) {
+    transactionReference = approvalReference;
+  } else if (transactionId) {
+    transactionReference = transactionId;
+  } else {
+    transactionReference = `TXN-${Date.now().toString(36).toUpperCase()}`;
+  }
+
+  // 1. Step to SUCCESS_RESPONSE if not already there
+  let currentStep: LocalExpense | Expense = current;
+  let step1Event: ExpenseEvent | null = null;
+  if (current.status !== 'SUCCESS_RESPONSE') {
+    const e1 = uuid();
+    const s1 = applyTransition(currentStep, {
+      to: 'SUCCESS_RESPONSE',
+      at,
+      eventId: e1,
+      paymentApp,
+      transactionId,
+      approvalReference,
+      responseCode,
+      meta: { appStatus: response?.status ?? 'SUCCESS', responseCode },
+    });
+    currentStep = s1.expense;
+    step1Event = s1.event;
+  }
+
+  // 2. Step to PAID
+  const e2 = uuid();
+  const s2 = applyTransition(currentStep, {
+    to: 'PAID',
+    at,
+    eventId: e2,
+    reference: utr ?? transactionReference ?? undefined,
+    paymentApp,
+    transactionId,
+    approvalReference,
+    responseCode,
+  });
+  const final = s2.expense;
+
+  await inTx(db, async (tx) => {
+    await tx.runAsync(
+      `UPDATE expenses SET status = ?, utr = ?, transaction_reference = ?, payment_app = ?,
+         payment_initiated_at = COALESCE(payment_initiated_at, ?), payment_completed_at = ?,
+         updated_at = ?, transaction_id = ?, approval_reference = ?, response_code = ?,
+         sync_state = 'pending' WHERE id = ?`,
+      final.status, final.utr, final.transactionReference, final.paymentApp ?? paymentApp ?? null,
+      at, final.paymentCompletedAt ?? at, at,
+      final.transactionId ?? null, final.approvalReference ?? null, final.responseCode ?? null, id,
+    );
+    if (step1Event) await insertEvent(tx, step1Event);
+    await insertEvent(tx, s2.event);
+
+    if (step1Event) {
+      await enqueue(tx, 'expense.transition', id, {
+        id, to: 'SUCCESS_RESPONSE', at, eventId: step1Event.id,
+        ...(paymentApp ? { paymentApp } : {}),
+        ...(transactionId ? { transactionId } : {}),
+        ...(approvalReference ? { approvalReference } : {}),
+        ...(responseCode ? { responseCode } : {}),
+      });
+    }
+    await enqueue(tx, 'expense.transition', id, {
+      id, to: 'PAID', at, eventId: e2,
+      reference: utr ?? transactionReference ?? undefined,
+      ...(paymentApp ? { paymentApp } : {}),
+      ...(transactionId ? { transactionId } : {}),
+      ...(approvalReference ? { approvalReference } : {}),
+      ...(responseCode ? { responseCode } : {}),
+    });
+  });
+
+  bumpData();
+  return { ...final, syncState: 'pending', syncError: null };
+}
+
+/** Records a failed payment response from UPI app: FAILED_RESPONSE → FAILED. */
+export async function recordFailedPayment(
+  id: string,
+  response: {
+    status: string;
+    txnId?: string;
+    txnRef?: string;
+    approvalRefNo?: string;
+    responseCode?: string;
+  } | null,
+  paymentApp?: string,
+): Promise<LocalExpense> {
+  const db = await getDb();
+  const current = await getExpense(id);
+  if (!current) throw new Error('Expense not found');
+
+  const at = new Date().toISOString();
+  const transactionId = response?.txnId ?? null;
+  const approvalReference = response?.approvalRefNo ?? null;
+  const responseCode = response?.responseCode ?? null;
+
+  let currentStep: LocalExpense | Expense = current;
+  let step1Event: ExpenseEvent | null = null;
+  if (current.status !== 'FAILED_RESPONSE') {
+    const e1 = uuid();
+    const s1 = applyTransition(currentStep, {
+      to: 'FAILED_RESPONSE',
+      at,
+      eventId: e1,
+      paymentApp,
+      transactionId,
+      approvalReference,
+      responseCode,
+      meta: { appStatus: response?.status ?? 'FAILURE', responseCode },
+    });
+    currentStep = s1.expense;
+    step1Event = s1.event;
+  }
+
+  const e2 = uuid();
+  const s2 = applyTransition(currentStep, {
+    to: 'FAILED',
+    at,
+    eventId: e2,
+    paymentApp,
+    transactionId,
+    approvalReference,
+    responseCode,
+  });
+  const final = s2.expense;
+
+  await inTx(db, async (tx) => {
+    await tx.runAsync(
+      `UPDATE expenses SET status = ?, payment_app = ?, updated_at = ?,
+         transaction_id = ?, approval_reference = ?, response_code = ?, sync_state = 'pending' WHERE id = ?`,
+      final.status, final.paymentApp ?? paymentApp ?? null, at,
+      final.transactionId ?? null, final.approvalReference ?? null, final.responseCode ?? null, id,
+    );
+    if (step1Event) await insertEvent(tx, step1Event);
+    await insertEvent(tx, s2.event);
+
+    if (step1Event) {
+      await enqueue(tx, 'expense.transition', id, {
+        id, to: 'FAILED_RESPONSE', at, eventId: step1Event.id,
+        ...(paymentApp ? { paymentApp } : {}),
+        ...(transactionId ? { transactionId } : {}),
+        ...(approvalReference ? { approvalReference } : {}),
+        ...(responseCode ? { responseCode } : {}),
+      });
+    }
+    await enqueue(tx, 'expense.transition', id, {
+      id, to: 'FAILED', at, eventId: e2,
+      ...(paymentApp ? { paymentApp } : {}),
+      ...(transactionId ? { transactionId } : {}),
+      ...(approvalReference ? { approvalReference } : {}),
+      ...(responseCode ? { responseCode } : {}),
+    });
+  });
+
+  bumpData();
+  return { ...final, syncState: 'pending', syncError: null };
 }
 
 /** Saves the UTR / transaction ID: UTR_ADDED → PAID atomically, with duplicate protection. */
@@ -203,6 +431,8 @@ export interface ExpensePatch {
   category?: string;
   notes?: string | null;
   expenseDate?: string;
+  mode?: ExpenseMode | null;
+  splitData?: SplitData | null;
 }
 
 export async function updateExpense(id: string, patch: ExpensePatch): Promise<void> {
@@ -212,11 +442,33 @@ export async function updateExpense(id: string, patch: ExpensePatch): Promise<vo
     const cur = await tx.getFirstAsync<Row>('SELECT * FROM expenses WHERE id = ?', id);
     if (!cur) throw new Error('Expense not found');
     await tx.runAsync(
-      `UPDATE expenses SET reason = ?, category = ?, notes = ?, expense_date = ?, updated_at = ?, sync_state = 'pending' WHERE id = ?`,
-      patch.reason?.trim() ?? cur.reason, patch.category ?? cur.category,
-      patch.notes !== undefined ? patch.notes : cur.notes, patch.expenseDate ?? cur.expense_date, at, id,
+      `UPDATE expenses SET reason = ?, category = ?, notes = ?, expense_date = ?, mode = ?, split_data = ?, updated_at = ?, sync_state = 'pending' WHERE id = ?`,
+      patch.reason?.trim() ?? cur.reason,
+      patch.category ?? cur.category,
+      patch.notes !== undefined ? patch.notes : cur.notes,
+      patch.expenseDate ?? cur.expense_date,
+      patch.mode !== undefined ? patch.mode : cur.mode,
+      patch.splitData !== undefined ? (patch.splitData ? JSON.stringify(patch.splitData) : null) : cur.split_data,
+      at, id,
     );
     await enqueue(tx, 'expense.update', id, { id, patch: { ...patch, updatedAt: at } });
+  });
+  bumpData();
+}
+
+export async function setExpenseMode(id: string, mode: ExpenseMode): Promise<void> {
+  await updateExpense(id, { mode });
+}
+
+export async function setExpenseSplit(id: string, splitData: SplitData | null): Promise<void> {
+  await updateExpense(id, { splitData });
+}
+
+export async function dismissRecovery(id: string): Promise<void> {
+  const db = await getDb();
+  const at = new Date().toISOString();
+  await inTx(db, async (tx) => {
+    await tx.runAsync(`UPDATE expenses SET recovery_dismissed = 1, updated_at = ? WHERE id = ?`, at, id);
   });
   bumpData();
 }
@@ -298,7 +550,7 @@ export async function countExpenses(): Promise<number> {
 export async function findOpenPaymentSessions(): Promise<LocalExpense[]> {
   const db = await getDb();
   const rows = await db.getAllAsync<Row>(
-    "SELECT * FROM expenses WHERE deleted_at IS NULL AND status IN ('PAYMENT_APP_OPENED','USER_RETURNED') ORDER BY updated_at DESC",
+    "SELECT * FROM expenses WHERE deleted_at IS NULL AND (recovery_dismissed IS NULL OR recovery_dismissed = 0) AND status IN ('PAYMENT_APP_OPENED','USER_RETURNED') ORDER BY updated_at DESC",
   );
   return rows.map(rowToExpense);
 }

@@ -9,6 +9,9 @@ export interface TransitionInput {
   reference?: string | null;
   paymentApp?: string | null;
   meta?: ExpenseEvent['meta'];
+  transactionId?: string | null;
+  approvalReference?: string | null;
+  responseCode?: string | null;
 }
 
 /**
@@ -19,12 +22,13 @@ export function applyTransition(expense: Expense, input: TransitionInput): { exp
   let utr = expense.utr;
   let transactionReference = expense.transactionReference;
 
-  if (input.to === 'UTR_ADDED') {
+  if (input.to === 'UTR_ADDED' || (input.to === 'PAID' && input.reference)) {
     const r = classifyReference(input.reference ?? '');
     if (!r.ok) {
-      // Let the state machine raise REFERENCE_REQUIRED consistently.
-      utr = null;
-      transactionReference = null;
+      if (input.to === 'UTR_ADDED') {
+        utr = null;
+        transactionReference = null;
+      }
     } else if (r.kind === 'UTR') {
       utr = r.value;
     } else {
@@ -40,14 +44,23 @@ export function applyTransition(expense: Expense, input: TransitionInput): { exp
     transactionReference,
   });
 
-  const next: Expense = { ...expense, utr, transactionReference, status: input.to, updatedAt: input.at };
+  const next: Expense = {
+    ...expense,
+    utr,
+    transactionReference,
+    status: input.to,
+    updatedAt: input.at,
+    transactionId: input.transactionId !== undefined ? input.transactionId : expense.transactionId,
+    approvalReference: input.approvalReference !== undefined ? input.approvalReference : expense.approvalReference,
+    responseCode: input.responseCode !== undefined ? input.responseCode : expense.responseCode,
+  };
   if (input.to === 'PAYMENT_APP_OPENED') {
     next.paymentInitiatedAt = expense.paymentInitiatedAt ?? input.at;
     if (input.paymentApp) next.paymentApp = input.paymentApp;
   }
-  if (input.to === 'PAYMENT_CONFIRMED_BY_USER') next.paymentCompletedAt = input.at;
+  if (input.to === 'PAYMENT_CONFIRMED_BY_USER' || input.to === 'SUCCESS_RESPONSE') next.paymentCompletedAt = input.at;
   if (input.to === 'PAID' && !next.paymentCompletedAt) next.paymentCompletedAt = input.at;
-  if (input.to === 'FAILED' || input.to === 'CANCELLED') next.paymentCompletedAt = null;
+  if (input.to === 'FAILED' || input.to === 'FAILED_RESPONSE' || input.to === 'CANCELLED') next.paymentCompletedAt = null;
 
   return {
     expense: next,

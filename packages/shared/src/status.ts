@@ -3,7 +3,8 @@
  *
  * Core rule: opening a UPI app is NOT a successful payment. An expense only
  * becomes PAID after the user confirms completion AND supplies a UTR /
- * transaction reference (or, for non-UPI manual records, via RECORDED path).
+ * transaction reference (or, for non-UPI manual records, via RECORDED path),
+ * OR when the external UPI app returns an explicit SUCCESS response.
  */
 
 export const EXPENSE_STATUSES = [
@@ -12,6 +13,8 @@ export const EXPENSE_STATUSES = [
   'PAYMENT_APP_OPENED',
   'USER_RETURNED',
   'PAYMENT_CONFIRMED_BY_USER',
+  'SUCCESS_RESPONSE',
+  'FAILED_RESPONSE',
   'UTR_ADDED',
   'PAID',
   'FAILED',
@@ -26,12 +29,14 @@ export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
 export const TRANSITIONS: Readonly<Record<ExpenseStatus, readonly ExpenseStatus[]>> = {
   DRAFT: ['PENDING_PAYMENT', 'CANCELLED', 'PAID'],
   PENDING_PAYMENT: ['PAYMENT_APP_OPENED', 'CANCELLED'],
-  PAYMENT_APP_OPENED: ['USER_RETURNED', 'CANCELLED', 'UNCONFIRMED'],
-  USER_RETURNED: ['PAYMENT_CONFIRMED_BY_USER', 'FAILED', 'CANCELLED', 'PAYMENT_APP_OPENED', 'UNCONFIRMED'],
-  PAYMENT_CONFIRMED_BY_USER: ['UTR_ADDED', 'FAILED'],
+  PAYMENT_APP_OPENED: ['USER_RETURNED', 'SUCCESS_RESPONSE', 'FAILED_RESPONSE', 'PAID', 'FAILED', 'CANCELLED', 'UNCONFIRMED'],
+  USER_RETURNED: ['PAYMENT_CONFIRMED_BY_USER', 'SUCCESS_RESPONSE', 'FAILED_RESPONSE', 'PAID', 'FAILED', 'CANCELLED', 'UNCONFIRMED'],
+  SUCCESS_RESPONSE: ['PAID', 'FAILED'],
+  FAILED_RESPONSE: ['FAILED', 'PENDING_PAYMENT', 'CANCELLED'],
+  PAYMENT_CONFIRMED_BY_USER: ['UTR_ADDED', 'PAID', 'FAILED'],
   UTR_ADDED: ['PAID'],
-  UNCONFIRMED: ['PAYMENT_CONFIRMED_BY_USER', 'FAILED', 'CANCELLED', 'PAYMENT_APP_OPENED'],
-  FAILED: ['PAYMENT_APP_OPENED', 'CANCELLED'],
+  UNCONFIRMED: ['PAYMENT_CONFIRMED_BY_USER', 'SUCCESS_RESPONSE', 'FAILED_RESPONSE', 'PAID', 'FAILED', 'CANCELLED'],
+  FAILED: ['PENDING_PAYMENT', 'PAYMENT_APP_OPENED', 'CANCELLED'],
   PAID: [],
   CANCELLED: [],
 };
@@ -117,6 +122,7 @@ export function statusBucket(s: ExpenseStatus): StatusBucket {
     case 'PAID':
       return 'PAID';
     case 'FAILED':
+    case 'FAILED_RESPONSE':
       return 'FAILED';
     case 'CANCELLED':
       return 'CANCELLED';
@@ -140,6 +146,10 @@ export function statusLabel(s: ExpenseStatus): string {
       return 'Awaiting confirmation';
     case 'PAYMENT_CONFIRMED_BY_USER':
       return 'UTR missing';
+    case 'SUCCESS_RESPONSE':
+      return 'Payment success';
+    case 'FAILED_RESPONSE':
+      return 'Payment failed';
     case 'UTR_ADDED':
       return 'Finalising';
     case 'PAID':
@@ -160,6 +170,7 @@ export function needsAttention(s: ExpenseStatus): boolean {
     s === 'PAYMENT_APP_OPENED' ||
     s === 'USER_RETURNED' ||
     s === 'PAYMENT_CONFIRMED_BY_USER' ||
+    s === 'SUCCESS_RESPONSE' ||
     s === 'UTR_ADDED' ||
     s === 'UNCONFIRMED'
   );
@@ -173,13 +184,17 @@ export function timelineLabel(to: ExpenseStatus, from?: ExpenseStatus | null): s
     case 'PENDING_PAYMENT':
       return 'Payment slip generated';
     case 'PAYMENT_APP_OPENED':
-      return from === 'FAILED' || from === 'USER_RETURNED' || from === 'UNCONFIRMED'
+      return from === 'FAILED' || from === 'USER_RETURNED' || from === 'UNCONFIRMED' || from === 'FAILED_RESPONSE'
         ? 'Payment retried in UPI app'
         : 'Payment initiated in UPI app';
     case 'USER_RETURNED':
       return 'Returned from UPI app';
     case 'PAYMENT_CONFIRMED_BY_USER':
       return 'You confirmed the payment';
+    case 'SUCCESS_RESPONSE':
+      return 'UPI app confirmed success';
+    case 'FAILED_RESPONSE':
+      return 'UPI app reported failure';
     case 'UTR_ADDED':
       return 'Transaction reference added';
     case 'PAID':

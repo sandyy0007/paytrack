@@ -6,9 +6,6 @@
   "workspaces": ["packages/*", "apps/server"],
   "scripts": {
     "test": "npm run test -w @paytrack/shared && npm run test -w @paytrack/server",
-    "typecheck": "npm run typecheck -w @paytrack/shared && npm run typecheck -w @paytrack/server && npm --prefix apps/mobile run typecheck",
-    "build": "npm run build -w @paytrack/server",
-    "start": "npm run start -w @paytrack/server",
-    "migrate": "npm run migrate -w @paytrack/server"
+    "typecheck": "npm run typecheck -w @paytrack/shared && npm run typecheck -w @paytrack/server && npm --prefix apps/mobile run typecheck"
   }
 }

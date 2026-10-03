@@ -10,6 +10,7 @@ import { Icon } from '@/components/Icon';
 import { ManualUpiSheet } from '@/components/ManualUpiSheet';
 import { QRScannerFrame } from '@/components/QRScannerFrame';
 import { Screen } from '@/components/Screen';
+import { scanQrFromGallery } from '@/lib/galleryQr';
 import { haptic } from '@/lib/haptics';
 import { usePayFlow } from '@/lib/payFlow';
 import { colors, radius, space, type } from '@/theme/tokens';
@@ -46,6 +47,19 @@ export default function Scan() {
     setTimeout(() => router.replace('/pay/payee'), 350);
   }, [setPayload]);
 
+  const onPickGallery = async () => {
+    setError(null);
+    const res = await scanQrFromGallery();
+    if (res.ok) {
+      void haptic.success();
+      setPayload(res.payload);
+      router.replace('/pay/payee');
+    } else if (!res.canceled) {
+      void haptic.error();
+      setError(res.error);
+    }
+  };
+
   if (!perm) return <View style={{ flex: 1, backgroundColor: colors.bg }} />;
 
   if (!perm.granted) {
@@ -59,7 +73,14 @@ export default function Scan() {
           <View style={styles.permIcon}><Icon name="camera-outline" size={40} color={colors.primary} /></View>
           <Text style={[type.h2, { textAlign: 'center' }]}>Camera needed to scan</Text>
           <Text style={[type.body, { color: colors.textSecondary, textAlign: 'center' }]}>Camera access is used to scan UPI QR codes for payment preparation. Nothing is recorded or uploaded.</Text>
-          <SecondaryButton label="Enter UPI ID instead" variant="ghost" icon="at" onPress={() => setManual(true)} size="md" />
+          <View style={{ flexDirection: 'row', gap: space.sm, width: '100%' }}>
+            <View style={{ flex: 1 }}>
+              <SecondaryButton label="Gallery Image" variant="ghost" icon="image-outline" onPress={onPickGallery} size="md" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <SecondaryButton label="Enter UPI ID" variant="ghost" icon="at" onPress={() => setManual(true)} size="md" />
+            </View>
+          </View>
         </View>
         <ManualUpiSheet visible={manual} onClose={() => setManual(false)} />
       </Screen>
@@ -94,7 +115,14 @@ export default function Scan() {
             <Text style={[type.label, { color: colors.text, flex: 1 }]}>{error}</Text>
           </Animated.View>
         ) : null}
-        <SecondaryButton label="Enter UPI ID instead" icon="at" onPress={() => setManual(true)} size="md" />
+        <View style={{ flexDirection: 'row', gap: space.sm }}>
+          <View style={{ flex: 1 }}>
+            <SecondaryButton label="From Gallery" icon="image-outline" onPress={onPickGallery} size="md" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <SecondaryButton label="Enter UPI ID" icon="at" onPress={() => setManual(true)} size="md" />
+          </View>
+        </View>
       </View>
       <ManualUpiSheet visible={manual} onClose={() => setManual(false)} />
     </View>

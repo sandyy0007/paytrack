@@ -1,7 +1,7 @@
-import { buildInsights, DEFAULT_CATEGORIES, formatINR, summarize } from '@paytrack/shared';
+import { buildInsights, buildMoneyJourney, calculatePaymentDna, DEFAULT_CATEGORIES, formatINR, summarize } from '@paytrack/shared';
 import { router } from 'expo-router';
 import { useState } from 'react';
-import { Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { BarChart, DonutChart, LineChart } from '@/components/Charts';
 import { GlassCard } from '@/components/GlassCard';
@@ -26,7 +26,9 @@ export default function Analytics() {
     const since = new Date(now.getFullYear(), now.getMonth() - 6, 1);
     const [rows, cats] = await Promise.all([expensesSince(since), listCategories()]);
     const s = summarize(rows, now, tzOffsetMinutes());
-    return { s, insights: buildInsights(s), cats };
+    const dna = calculatePaymentDna(rows);
+    const journey = buildMoneyJourney(rows);
+    return { s, insights: buildInsights(s), cats, dna, journey };
   });
 
   const d = q.data;
@@ -58,6 +60,75 @@ export default function Analytics() {
               <AnalyticsCard label="Pending" value={String(d.s.pendingCount)} icon="time-outline" tint={colors.warning} sub={d.s.pendingCount ? `${formatINR(d.s.pendingPaise)} unconfirmed` : 'All clear'} />
             </View>
           </Animated.View>
+
+          {/* Payment DNA Card */}
+          <GlassCard padding={space.lg}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm, marginBottom: space.sm }}>
+              <Icon name="finger-print" size={20} color={colors.primary} />
+              <View>
+                <Text style={type.h3}>Payment DNA</Text>
+                <Text style={type.caption}>Your spending rhythm & habits</Text>
+              </View>
+            </View>
+
+            <View style={{ gap: space.sm, marginTop: space.xs }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }}>
+                <Text style={type.caption}>Average Payment Size</Text>
+                <Text style={type.bodyStrong}>{formatINR(d.dna.averagePaymentPaise)}</Text>
+              </View>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }}>
+                <Text style={type.caption}>Largest Payment</Text>
+                <Text style={type.bodyStrong}>{formatINR(d.dna.largestPaymentPaise)}</Text>
+              </View>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }}>
+                <Text style={type.caption}>Peak Activity Rhythm</Text>
+                <Text style={[type.bodyStrong, { color: colors.cyan }]}>
+                  {d.dna.mostActiveDayOfWeek ? `${d.dna.mostActiveDayOfWeek.day}s (${d.dna.mostActiveDayOfWeek.count} txns)` : '—'}
+                </Text>
+              </View>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }}>
+                <Text style={type.caption}>Micro-Payments (≤ ₹200)</Text>
+                <Text style={type.bodyStrong}>
+                  {d.dna.smallPaymentsCount} ({d.dna.totalPaidCount ? Math.round((d.dna.smallPaymentsCount / d.dna.totalPaidCount) * 100) : 0}%)
+                </Text>
+              </View>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 }}>
+                <Text style={type.caption}>Top Payee</Text>
+                <Text style={type.bodyStrong}>{d.dna.mostFrequentPayee?.name ?? '—'}</Text>
+              </View>
+            </View>
+          </GlassCard>
+
+          {/* Money Journey Timeline */}
+          {d.journey.length > 0 && (
+            <GlassCard padding={space.lg}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm, marginBottom: space.sm }}>
+                <Icon name="trail-sign-outline" size={20} color={colors.primary} />
+                <View>
+                  <Text style={type.h3}>Money Journey</Text>
+                  <Text style={type.caption}>Chronological spending replay</Text>
+                </View>
+              </View>
+
+              <View style={{ gap: space.md, marginTop: space.xs }}>
+                {d.journey.slice(-8).reverse().map((step) => (
+                  <View key={step.id} style={{ flexDirection: 'row', gap: space.sm, alignItems: 'flex-start' }}>
+                    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: colors.primary, marginTop: 6 }} />
+                    <View style={{ flex: 1, gap: 2 }}>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                        <Text style={type.bodyStrong} numberOfLines={1}>{step.payeeName}</Text>
+                        <Text style={[type.bodyStrong, { color: colors.text }]}>{formatINR(step.amountPaise)}</Text>
+                      </View>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <Text style={[type.caption, { color: colors.textMuted }]}>{step.reason} · {step.category}</Text>
+                        <Text style={[type.caption, { color: colors.textSecondary }]}>Day total: {formatINR(step.cumulativeDayPaise)}</Text>
+                      </View>
+                    </View>
+                  </View>
+                ))}
+              </View>
+            </GlassCard>
+          )}
 
           {d.insights.length ? (
             <GlassCard variant="hero" padding={space.xl}>
