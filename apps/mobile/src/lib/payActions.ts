@@ -2,22 +2,48 @@ import { buildUpiPaymentUri, parseUpiQr, type UpiPayload } from '@paytrack/share
 import { getExpense, transition, type LocalExpense } from './repo';
 import { scheduleSync } from './sync';
 
-/** Rebuilds the parsed QR payload stored with the expense (needed for retries). */
+/** Rebuilds the parsed QR payload stored with the expense (needed for retries and launches). */
 export function payloadFromExpense(e: LocalExpense): UpiPayload | null {
-  if (!e.upiId) return null;
-  let params: Record<string, string> = { pa: e.upiId };
+  if (!e.upiId && !e.qrPayload) return null;
+
+  // 1. Direct raw UPI URI stored in qrPayload
+  if (e.qrPayload && typeof e.qrPayload === 'string' && e.qrPayload.trim().toLowerCase().startsWith('upi:')) {
+    const r = parseUpiQr(e.qrPayload.trim());
+    if (r.ok) return r.payload;
+  }
+
+  // 2. Structured JSON storing raw URI and/or params
   if (e.qrPayload) {
     try {
-      params = JSON.parse(e.qrPayload);
+      const parsed = JSON.parse(e.qrPayload);
+      if (typeof parsed === 'object' && parsed !== null) {
+        if (typeof parsed.raw === 'string' && parsed.raw.trim().toLowerCase().startsWith('upi:')) {
+          const r = parseUpiQr(parsed.raw.trim());
+          if (r.ok) return r.payload;
+        }
+        const params: Record<string, string> = (parsed.params && typeof parsed.params === 'object') ? parsed.params : parsed;
+        if (!params.pa && e.upiId) params.pa = e.upiId;
+        if (!params.pn && e.payeeName) params.pn = e.payeeName;
+        const query = Object.entries(params)
+          .filter(([_, v]) => v != null && v !== '')
+          .map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`)
+          .join('&');
+        const r = parseUpiQr(`upi://pay?${query}`);
+        if (r.ok) return r.payload;
+      }
     } catch {
-      /* fall back to UPI id only */
+      /* fall back */
     }
   }
-  if (!params.pa) params.pa = e.upiId;
-  if (!params.pn && e.payeeName) params.pn = e.payeeName;
-  const query = Object.entries(params).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
-  const r = parseUpiQr(`upi://pay?${query}`);
-  return r.ok ? r.payload : null;
+
+  // 3. Fallback: recreate minimal UPI payload from upiId and payeeName
+  if (e.upiId) {
+    const query = `pa=${encodeURIComponent(e.upiId)}${e.payeeName ? `&pn=${encodeURIComponent(e.payeeName)}` : ''}`;
+    const r = parseUpiQr(`upi://pay?${query}`);
+    return r.ok ? r.payload : null;
+  }
+
+  return null;
 }
 
 export function buildUriForExpense(e: LocalExpense, shareNote: boolean): string {

@@ -17,9 +17,10 @@ export function ManualUpiSheet({ visible, onClose }: { visible: boolean; onClose
   const go = () => {
     const v = vpa.trim();
     if (!isValidVpa(v)) return setErr('Enter a valid UPI ID, like name@bank');
-    const r = parseUpiQr(`upi://pay?pa=${encodeURIComponent(v)}${name.trim() ? `&pn=${encodeURIComponent(name.trim())}` : ''}`);
+    const uri = `upi://pay?pa=${encodeURIComponent(v)}${name.trim() ? `&pn=${encodeURIComponent(name.trim())}` : ''}`;
+    const r = parseUpiQr(uri);
     if (!r.ok) return setErr(r.message);
-    setPayload(r.payload, 'MANUAL_UPI');
+    setPayload(r.payload, 'MANUAL_UPI', uri);
     onClose();
     router.push('/pay/payee');
   };

@@ -10,6 +10,7 @@ import { UpiAppPicker } from '@/components/UpiAppPicker';
 import { copyText } from '@/lib/clipboard';
 import { haptic } from '@/lib/haptics';
 import { cancelPendingReminder, schedulePendingReminder } from '@/lib/notifications';
+import { maskUpiUriForLogging } from '@paytrack/shared';
 import { buildUriForExpense, run } from '@/lib/payActions';
 import { getExpense, recordFailedPayment, saveSuccessfulPayment, transition, type LocalExpense } from '@/lib/repo';
 import { useSettings } from '@/lib/settings';
@@ -43,6 +44,10 @@ export default function Redirect() {
         uri = buildUriForExpense(e, shareNoteWithPayee);
       } catch (err) {
         return setPhase({ kind: 'error', message: (err as Error).message });
+      }
+      if (__DEV__) {
+        console.log('[UPI_LAUNCH] parsed QR:', maskUpiUriForLogging(e.qrPayload ?? ''));
+        console.log('[UPI_LAUNCH] final URI:', maskUpiUriForLogging(uri));
       }
       const appName = appNameForPackage(preferredUpiPackage) ?? 'UPI app';
       // Record the hand-off first so an app kill mid-payment is recoverable.

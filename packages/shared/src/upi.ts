@@ -50,6 +50,14 @@ export interface UpiPayload {
   tr?: string;
   /** Merchant category code (mc). */
   mc?: string;
+  /** Initiation mode (mode, e.g. '01', '02'). */
+  mode?: string;
+  /** Purpose code (purpose, e.g. '00', '14'). */
+  purpose?: string;
+  /** Organization ID / PSP bank ID (orgid). */
+  orgid?: string;
+  /** Cryptographic signature (sign). */
+  sign?: string;
   /** True when a merchant code or signature is present. */
   isMerchant: boolean;
   /** True when PayTrack must not change the amount (signed / merchant QR with fixed amount). */
@@ -57,6 +65,8 @@ export interface UpiPayload {
   /** All original parameters (lower-cased keys), preserved for the intent. */
   params: Record<string, string>;
   source: 'UPI_URI' | 'BHARAT_QR';
+  /** Original raw QR payload scanned (if available). */
+  originalQrPayload?: string;
 }
 
 export type UpiParseResult =
@@ -67,12 +77,29 @@ function fail(error: UpiQrErrorCode): UpiParseResult {
   return { ok: false, error, message: UPI_QR_ERROR_MESSAGES[error] };
 }
 
-function safeDecode(s: string): string {
-  const plusFixed = s.replace(/\+/g, ' ');
+function safeDecode(s: string, key?: string): string {
+  // Base64 cryptographic signatures (sign) and technical identifiers (tr, pa, etc.)
+  // contain literal '+' characters that must NEVER be replaced by spaces.
+  if (key === 'sign' || key === 'tr' || key === 'pa') {
+    try {
+      return decodeURIComponent(s);
+    } catch {
+      return s;
+    }
+  }
+  // For human-readable text fields like payee name (pn) or note (tn), '+' might represent spaces
+  if (key === 'pn' || key === 'tn') {
+    const plusFixed = s.replace(/\+/g, ' ');
+    try {
+      return decodeURIComponent(plusFixed);
+    } catch {
+      return plusFixed;
+    }
+  }
   try {
-    return decodeURIComponent(plusFixed);
+    return decodeURIComponent(s);
   } catch {
-    return plusFixed;
+    return s;
   }
 }
 
@@ -91,13 +118,13 @@ function parseQuery(q: string): Record<string, string> {
     if (!part) continue;
     const i = part.indexOf('=');
     const k = (i === -1 ? part : part.slice(0, i)).trim().toLowerCase();
-    const v = i === -1 ? '' : safeDecode(part.slice(i + 1));
+    const v = i === -1 ? '' : safeDecode(part.slice(i + 1), k);
     if (k && !(k in out)) out[k] = v;
   }
   return out;
 }
 
-function fromParams(params: Record<string, string>, source: UpiPayload['source']): UpiParseResult {
+export function fromParams(params: Record<string, string>, source: UpiPayload['source'], rawText?: string): UpiParseResult {
   const pa = (params.pa ?? '').trim();
   if (!pa) return fail('MISSING_PAYEE_ADDRESS');
   if (!isValidVpa(pa)) return fail('INVALID_PAYEE_ADDRESS');
@@ -122,8 +149,12 @@ function fromParams(params: Record<string, string>, source: UpiPayload['source']
   }
 
   const mc = params.mc?.trim() || undefined;
-  const isMerchant = Boolean((mc && mc !== '0000') || params.sign);
-  const amountLocked = amountPaise != null && (Boolean(params.sign) || isMerchant);
+  const mode = params.mode?.trim() || undefined;
+  const purpose = params.purpose?.trim() || undefined;
+  const orgid = params.orgid?.trim() || undefined;
+  const sign = params.sign?.trim() || undefined;
+  const isMerchant = Boolean((mc && mc !== '0000') || sign || orgid || params.mid);
+  const amountLocked = amountPaise != null && (Boolean(sign) || isMerchant);
 
   return {
     ok: true,
@@ -136,10 +167,15 @@ function fromParams(params: Record<string, string>, source: UpiPayload['source']
       note: sanitizeText(params.tn, 80),
       tr: params.tr?.trim() || undefined,
       mc,
+      mode,
+      purpose,
+      orgid,
+      sign,
       isMerchant,
       amountLocked,
       params,
       source,
+      originalQrPayload: rawText,
     },
   };
 }
@@ -155,7 +191,7 @@ export function parseUpiQr(raw: string | null | undefined): UpiParseResult {
     if (!m) return fail('NOT_UPI');
     const action = (m[1] ?? '').toLowerCase();
     if (action !== 'pay') return fail('UNSUPPORTED_UPI_ACTION');
-    return fromParams(parseQuery(m[2] ?? ''), 'UPI_URI');
+    return fromParams(parseQuery(m[2] ?? ''), 'UPI_URI', text);
   }
 
   if (/^000201/.test(text)) return parseBharatQr(text);
@@ -247,12 +283,9 @@ function parseBharatQr(text: string): UpiParseResult {
 
 /* ----------------------------- Intent builder ---------------------------- */
 
-/** Parameters PayTrack re-emits verbatim from the QR (merchant/signature fields). */
-const PASSTHROUGH_KEYS = ['mc', 'tr', 'tid', 'url', 'mode', 'purpose', 'orgid', 'sign', 'mid', 'msid', 'mtid', 'qrmedium', 'invoiceno', 'invoicedate', 'gstin', 'gstbrkup'];
-
 export interface BuildIntentOptions {
   amountPaise: number;
-  /** Optional note to include as `tn` when QR has none. */
+  /** Optional note to include as `tn` when QR has none or user chose to share note. */
   note?: string;
 }
 
@@ -263,19 +296,33 @@ export class UpiIntentError extends Error {
   }
 }
 
-function encodeUpiParam(key: string, value: string): string {
-  // Preserve literal '@' in payee address (pa); Android UPI apps and banks reject %40 in VPAs
-  if (key === 'pa') {
-    return `${key}=${value.replace(/[^a-zA-Z0-9.@\-_]/g, (c) => encodeURIComponent(c))}`;
-  }
-  return `${key}=${encodeURIComponent(value)}`;
+export interface NormalizedPaymentIntent {
+  pa: string;
+  pn?: string;
+  amount: string;
+  currency: string;
+  transactionReference?: string;
+  note?: string;
+  merchantCategoryCode?: string;
+  mode?: string;
+  purpose?: string;
+  organizationId?: string;
+  signature?: string;
+  originalQrPayload?: string;
+  params: Record<string, string>;
 }
 
-/**
- * Builds a `upi://pay` URI from a parsed QR and a confirmed amount.
- * Never silently changes a locked/signed amount.
- */
-export function buildUpiPaymentUri(payload: UpiPayload, opts: BuildIntentOptions): string {
+export function formatUpiAmount(paise: number): string {
+  const rupees = Math.floor(paise / 100);
+  const p = paise % 100;
+  if (p === 0) return `${rupees}.00`;
+  return `${rupees}.${String(p).padStart(2, '0')}`;
+}
+
+export function createNormalizedPaymentIntent(
+  payload: UpiPayload,
+  opts: BuildIntentOptions
+): NormalizedPaymentIntent {
   const { amountPaise } = opts;
   if (!Number.isInteger(amountPaise) || amountPaise <= 0 || amountPaise > MAX_AMOUNT_PAISE) {
     throw new UpiIntentError('Amount is invalid');
@@ -288,31 +335,126 @@ export function buildUpiPaymentUri(payload: UpiPayload, opts: BuildIntentOptions
   }
   if (!isValidVpa(payload.pa)) throw new UpiIntentError('UPI ID is invalid');
 
-  const pairs: [string, string][] = [['pa', payload.pa]];
-  if (payload.pn) pairs.push(['pn', payload.pn]);
+  // If the QR had a locked amount with exact string representation in params, preserve it; otherwise format cleanly
+  const amountStr = (payload.amountLocked && payload.params.am) ? payload.params.am.trim() : formatUpiAmount(amountPaise);
+  const note = opts.note ? sanitizeText(opts.note, 50) : payload.note;
 
-  for (const k of PASSTHROUGH_KEYS) {
-    const v = payload.params[k];
+  return {
+    pa: payload.pa,
+    pn: payload.pn,
+    amount: amountStr,
+    currency: 'INR',
+    transactionReference: payload.tr,
+    note: note || undefined,
+    merchantCategoryCode: payload.mc,
+    mode: payload.mode,
+    purpose: payload.purpose,
+    organizationId: payload.orgid,
+    signature: payload.sign,
+    originalQrPayload: payload.originalQrPayload,
+    params: { ...payload.params },
+  };
+}
+
+function encodeUpiParam(key: string, value: string): string {
+  // Preserve literal '@' in payee address (pa); Android UPI apps and banks reject %40 in VPAs
+  if (key === 'pa') {
+    return `${key}=${value.replace(/[^a-zA-Z0-9.@\-_]/g, (c) => encodeURIComponent(c))}`;
+  }
+  return `${key}=${encodeURIComponent(value)}`;
+}
+
+/**
+ * Builds a valid `upi://pay` URI from a parsed QR and a confirmed amount.
+ * Strictly adheres to NPCI UPI specification and preserves all merchant routing,
+ * acquiring bank PSP tags (orgid), QR initiation modes (mode), and signatures (sign).
+ */
+export function buildUpiPaymentUri(payload: UpiPayload, opts: BuildIntentOptions): string {
+  const intent = createNormalizedPaymentIntent(payload, opts);
+
+  const pairs: [string, string][] = [['pa', intent.pa]];
+  if (intent.pn) pairs.push(['pn', intent.pn]);
+
+  // Merchant & routing parameters: PRESERVE ALL!
+  // Order per NPCI UPI spec: mc, tid, tr, mid, msid, mtid, mode, purpose, orgid
+  if (intent.merchantCategoryCode) pairs.push(['mc', intent.merchantCategoryCode]);
+  if (payload.params.tid) pairs.push(['tid', payload.params.tid]);
+  if (intent.transactionReference) pairs.push(['tr', intent.transactionReference]);
+  if (payload.params.mid) pairs.push(['mid', payload.params.mid]);
+  if (payload.params.msid) pairs.push(['msid', payload.params.msid]);
+  if (payload.params.mtid) pairs.push(['mtid', payload.params.mtid]);
+  if (intent.mode) pairs.push(['mode', intent.mode]);
+  if (intent.purpose) pairs.push(['purpose', intent.purpose]);
+  if (intent.organizationId) pairs.push(['orgid', intent.organizationId]);
+
+  // Amount & Currency
+  pairs.push(['am', intent.amount]);
+  if (payload.minAmountPaise != null) {
+    const mamStr = payload.params.mam?.trim() || paiseToDecimalString(payload.minAmountPaise);
+    pairs.push(['mam', mamStr]);
+  }
+  pairs.push(['cu', intent.currency]);
+
+  if (payload.params.url) pairs.push(['url', payload.params.url]);
+
+  // Note (tn)
+  if (intent.note) pairs.push(['tn', intent.note]);
+
+  // Pass through any other original QR parameters (e.g. qrmedium, invoiceno, invoicedate, gstin, custom provider tags)
+  const handledKeys = new Set([
+    'pa', 'pn', 'mc', 'tid', 'tr', 'mid', 'msid', 'mtid',
+    'mode', 'purpose', 'orgid', 'am', 'mam', 'cu', 'url', 'tn', 'sign'
+  ]);
+
+  for (const [k, v] of Object.entries(payload.params)) {
+    if (handledKeys.has(k)) continue;
     if (v == null || v === '') continue;
-
-    // Do NOT emit offline camera QR initiation modes (mode=01 or mode=02) into an inter-app VIEW Intent.
-    // NPCI and bank fraud switches reject inter-app intents with offline QR modes as spoofed QR scans.
-    if (k === 'mode' && (v === '01' || v === '02')) continue;
-
-    // In static QRs, strip placeholder orgid tags that trigger unverified merchant intent restrictions
-    if (k === 'orgid' && (v === '000000' || !payload.amountLocked)) continue;
-
     pairs.push([k, v]);
   }
 
-  pairs.push(['am', paiseToDecimalString(amountPaise)]);
-  if (payload.minAmountPaise != null) pairs.push(['mam', paiseToDecimalString(payload.minAmountPaise)]);
-  pairs.push(['cu', 'INR']);
-
-  const tn = payload.note ?? sanitizeText(opts.note, 50);
-  if (tn) pairs.push(['tn', tn]);
+  // Cryptographic signature (sign) goes at the end of the query string per NPCI spec
+  if (intent.signature) {
+    pairs.push(['sign', intent.signature]);
+  }
 
   return 'upi://pay?' + pairs.map(([k, v]) => encodeUpiParam(k, v)).join('&');
+}
+
+/**
+ * Masks sensitive identifiers in a UPI URI for safe console logging in development builds.
+ */
+export function maskUpiUriForLogging(uri: string): string {
+  if (!uri) return '';
+  try {
+    const parts = uri.split('?');
+    if (parts.length < 2) return uri;
+    const base = parts[0];
+    const query = parts[1] ?? '';
+    const maskedPairs = query.split('&').map((p) => {
+      const idx = p.indexOf('=');
+      if (idx === -1) return p;
+      const k = p.slice(0, idx);
+      const v = decodeURIComponent(p.slice(idx + 1));
+      if (k === 'pa') {
+        const at = v.indexOf('@');
+        if (at > 2) {
+          return `${k}=${v[0]}***${v.slice(at - 1)}`;
+        }
+        return `${k}=***${v.slice(at)}`;
+      }
+      if (k === 'sign') {
+        return `${k}=${v.slice(0, 6)}***(len:${v.length})`;
+      }
+      if (k === 'tr') {
+        if (v.length > 4) return `${k}=${v.slice(0, 2)}***${v.slice(-2)}`;
+        return `${k}=***`;
+      }
+      return p;
+    });
+    return `${base}?${maskedPairs.join('&')}`;
+  } catch {
+    return 'upi://pay?[masked]';
+  }
 }
 
 /* ------------------------- UPI app response parser ----------------------- */

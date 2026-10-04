@@ -182,14 +182,15 @@ describe('parseUpiAppResponse', () => {
     expect(r?.utr).toBe('123456789012');
   });
 
-  it('strips offline camera QR mode=01 and mode=02 from intent URI', () => {
+  it('preserves merchant QR mode=01, mode=02 and orgid in intent URI', () => {
     const r = parseUpiQr('upi://pay?pa=paytmqr6ohg0f@ptyes&pn=PRADEEP%20KUSHWAH&mc=5499&mode=02&orgid=000000');
     if (!r.ok) throw new Error();
     const uri = buildUpiPaymentUri(r.payload, { amountPaise: 2000 });
     expect(uri).toContain('pa=paytmqr6ohg0f@ptyes');
     expect(uri).toContain('pn=PRADEEP%20KUSHWAH');
-    expect(uri).not.toContain('mode=02');
-    expect(uri).not.toContain('orgid=000000');
+    expect(uri).toContain('mc=5499');
+    expect(uri).toContain('mode=02');
+    expect(uri).toContain('orgid=000000');
     expect(uri).toContain('am=20.00');
   });
 });

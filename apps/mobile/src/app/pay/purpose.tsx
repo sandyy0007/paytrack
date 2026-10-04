@@ -54,6 +54,7 @@ export default function Purpose() {
       const e = await run(() => createExpense({
         amountPaise, payeeName: payload.pn ?? null, upiId: payload.pa, reason: r, category, paymentMethod: 'UPI',
         qrSource: flow.qrSource, qrParams: payload.params,
+        originalQrPayload: flow.originalQrPayload ?? payload.originalQrPayload ?? null,
       }));
       void haptic.success();
       router.replace({ pathname: '/pay/slip', params: { id: e.id, fresh: '1' } });

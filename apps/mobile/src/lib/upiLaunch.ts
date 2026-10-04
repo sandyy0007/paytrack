@@ -4,7 +4,7 @@
  */
 import * as IntentLauncher from 'expo-intent-launcher';
 import { AppState, Linking, Platform } from 'react-native';
-import { KNOWN_UPI_APPS, parseUpiAppResponse, type UpiAppResponse } from '@paytrack/shared';
+import { KNOWN_UPI_APPS, maskUpiUriForLogging, parseUpiAppResponse, type UpiAppResponse } from '@paytrack/shared';
 
 export type LaunchOutcome =
   | { launched: true; returnedVia: 'result' | 'foreground'; response: UpiAppResponse | null; resultCode: number | null }
@@ -50,6 +50,11 @@ function extractResponse(extra: unknown, data?: string | null): UpiAppResponse |
 
 export async function launchUpiPayment(uri: string, packageName: string | null): Promise<LaunchOutcome> {
   const noApp: LaunchOutcome = { launched: false, reason: 'NO_APP', message: 'No compatible UPI app found.' };
+
+  if (__DEV__) {
+    console.log('[UPI_LAUNCH] target app:', appNameForPackage(packageName) ?? 'system chooser');
+    console.log('[UPI_LAUNCH] final URI:', maskUpiUriForLogging(uri));
+  }
 
   if (Platform.OS === 'android') {
     const fg = waitForForeground();

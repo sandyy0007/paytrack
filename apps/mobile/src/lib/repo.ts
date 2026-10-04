@@ -86,6 +86,7 @@ export interface NewExpenseInput {
   paymentMethod: PaymentMethod;
   qrSource: QrSource;
   qrParams: Record<string, string> | null;
+  originalQrPayload?: string | null;
   notes?: string | null;
   expenseDate?: string;
   mode?: ExpenseMode | null;
@@ -105,11 +106,16 @@ export async function createExpense(input: NewExpenseInput): Promise<LocalExpens
   const id = uuid();
   const baseMode = input.mode ?? 'Personal';
   const finType = input.financialType ?? 'EXPENSE';
+  const rawQrPayload = input.originalQrPayload ?? null;
+  const qrPayloadStr = rawQrPayload
+    ? JSON.stringify({ raw: rawQrPayload, params: input.qrParams ?? {} })
+    : input.qrParams ? JSON.stringify(input.qrParams) : null;
+
   const base: LocalExpense = {
     id, expenseCode: code, userId: null, amountPaise: input.amountPaise, currency: 'INR',
     payeeName: input.payeeName, upiId: input.upiId, reason: input.reason.trim(), category: input.category,
     status: 'DRAFT', paymentMethod: input.paymentMethod, utr: null, transactionReference: null, paymentApp: null,
-    qrSource: input.qrSource, qrPayload: input.qrParams ? JSON.stringify(input.qrParams) : null, notes: input.notes ?? null,
+    qrSource: input.qrSource, qrPayload: qrPayloadStr, notes: input.notes ?? null,
     createdAt: at, expenseDate: input.expenseDate ?? at, paymentInitiatedAt: null, paymentCompletedAt: null,
     updatedAt: at, deletedAt: null, syncState: 'pending', syncError: null,
     mode: baseMode,

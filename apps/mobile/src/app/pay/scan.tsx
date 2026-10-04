@@ -43,7 +43,7 @@ export default function Scan() {
     setError(null);
     setFound(true);
     void haptic.success();
-    setPayload(parsed.payload);
+    setPayload(parsed.payload, parsed.payload.source, r.data);
     setTimeout(() => router.replace('/pay/payee'), 350);
   }, [setPayload]);
 
@@ -52,7 +52,7 @@ export default function Scan() {
     const res = await scanQrFromGallery();
     if (res.ok) {
       void haptic.success();
-      setPayload(res.payload);
+      setPayload(res.payload, res.payload.source, res.raw);
       router.replace('/pay/payee');
     } else if (!res.canceled) {
       void haptic.error();
