@@ -15,7 +15,7 @@ import { TAB_CONTENT_INSET } from '@/components/TabBar';
 import { TransactionCard } from '@/components/TransactionCard';
 import { useLiveQuery } from '@/lib/dataVersion';
 import { fmtDateLong, greeting, tzOffsetMinutes, weekdayLong } from '@/lib/format';
-import { dismissRecovery, expensesSince, findOpenPaymentSessions, listAttention, listExpenses } from '@/lib/repo';
+import { dismissRecovery, expensesSince, findOpenPaymentSessions, getMoneyPosition, getUdhaarSummary, listAttention, listExpenses } from '@/lib/repo';
 import { attentionLabel, resumeHref } from '@/lib/routes';
 import { useSession } from '@/lib/session';
 import { syncNow } from '@/lib/sync';
@@ -47,6 +47,8 @@ export default function Home() {
   const recent = useLiveQuery(() => listExpenses({ limit: 12 }));
   const attention = useLiveQuery(() => listAttention());
   const openSessions = useLiveQuery(() => findOpenPaymentSessions());
+  const moneyPositionQuery = useLiveQuery(() => getMoneyPosition());
+  const udhaarSummaryQuery = useLiveQuery(() => getUdhaarSummary());
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -58,6 +60,8 @@ export default function Home() {
   const name = session?.user.name?.split(' ')[0];
   const att = attention.data ?? [];
   const open = openSessions.data ?? [];
+  const moneyPos = moneyPositionQuery.data;
+  const udhaarSum = udhaarSummaryQuery.data;
 
   const displayExpenses = (recent.data ?? []).filter(
     (e) => selectedMode === 'All' || (e.mode ?? 'Personal') === selectedMode,
@@ -103,9 +107,69 @@ export default function Home() {
         <QuickAction icon="add" label="+ PAY" primary onPress={() => router.push('/pay')} />
         <QuickAction icon="scan-outline" label="Scan QR" onPress={() => router.push('/pay/scan')} />
         <QuickAction icon="create-outline" label="Add Expense" onPress={() => router.push('/add-expense')} />
+        <QuickAction icon="people-outline" label="Udhaar" onPress={() => router.push('/udhaar')} />
       </View>
 
       <SyncBanner />
+
+      {/* Available Usable Money Card if set */}
+      {moneyPos && moneyPos.bankBalancePaise > 0 ? (
+        <Animated.View entering={FadeInDown.duration(350)}>
+          <GlassCard padding={space.lg}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              <View>
+                <Text style={type.caption}>Available Money (Position)</Text>
+                <Text style={[type.h2, { color: colors.cyan, marginTop: 2 }]}>
+                  {formatINR(moneyPos.usableBalancePaise)}
+                </Text>
+              </View>
+              <Icon name="cash-outline" size={24} color={colors.cyan} />
+            </View>
+            <View style={{ flexDirection: 'row', gap: space.md, marginTop: space.sm }}>
+              <Text style={type.caption}>Bank: {formatINR(moneyPos.bankBalancePaise)}</Text>
+              {moneyPos.receivablePaise > 0 ? (
+                <Text style={[type.caption, { color: colors.primary }]}>Lena Hai: +{formatINR(moneyPos.receivablePaise)}</Text>
+              ) : null}
+              {moneyPos.payablePaise > 0 ? (
+                <Text style={[type.caption, { color: colors.warning }]}>Dena Hai: -{formatINR(moneyPos.payablePaise)}</Text>
+              ) : null}
+            </View>
+          </GlassCard>
+        </Animated.View>
+      ) : null}
+
+      {/* Compact Udhaar Card */}
+      <Animated.View entering={FadeInDown.duration(350)}>
+        <GlassCard padding={space.lg} onPress={() => router.push('/udhaar')} accessibilityLabel="Udhaar. Tap to open">
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: space.xs }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.xs }}>
+              <Icon name="people-outline" size={18} color={colors.primary} />
+              <Text style={type.h3}>Udhaar (Lend & Borrow)</Text>
+            </View>
+            <Icon name="chevron-forward" size={16} color={colors.textMuted} />
+          </View>
+          <View style={{ flexDirection: 'row', gap: space.lg, marginTop: space.xs }}>
+            <View style={{ flex: 1 }}>
+              <Text style={type.caption}>Lena Hai (To Receive)</Text>
+              <Text style={[type.h3, { color: colors.primary, marginTop: 2 }]}>
+                {udhaarSum ? formatINR(udhaarSum.totalLentPendingPaise) : '₹0'}
+              </Text>
+              <Text style={[type.caption, { color: colors.textMuted }]}>
+                {udhaarSum ? `${udhaarSum.activeLentCount} active` : ''}
+              </Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={type.caption}>Dena Hai (To Pay)</Text>
+              <Text style={[type.h3, { color: colors.warning, marginTop: 2 }]}>
+                {udhaarSum ? formatINR(udhaarSum.totalBorrowedPendingPaise) : '₹0'}
+              </Text>
+              <Text style={[type.caption, { color: colors.textMuted }]}>
+                {udhaarSum ? `${udhaarSum.activeBorrowedCount} active` : ''}
+              </Text>
+            </View>
+          </View>
+        </GlassCard>
+      </Animated.View>
 
       {/* Interrupted Payment Recovery Banner */}
       {open.length > 0 && (

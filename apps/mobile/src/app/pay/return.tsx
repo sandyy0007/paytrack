@@ -15,7 +15,7 @@ import { fmtRelative } from '@/lib/format';
 import { haptic } from '@/lib/haptics';
 import { cancelPendingReminder } from '@/lib/notifications';
 import { ensureReturned, run } from '@/lib/payActions';
-import { getExpense, transition } from '@/lib/repo';
+import { getExpense, saveSuccessfulPayment, transition } from '@/lib/repo';
 import { colors, space, type } from '@/theme/tokens';
 
 export default function Return() {
@@ -32,10 +32,11 @@ export default function Return() {
     setBusy('yes');
     try {
       await ensureReturned(e.id);
-      await run(() => transition(e.id, 'PAYMENT_CONFIRMED_BY_USER', manual ? { meta: { manualPayment: true } } : {}));
       void cancelPendingReminder(e.id);
       void haptic.success();
-      router.replace({ pathname: '/pay/utr', params: { id: e.id, ref: ref ?? '' } });
+      // Auto-save successful payment without forcing manual UTR entry
+      await run(() => saveSuccessfulPayment(e.id, ref ? { status: 'SUCCESS', txnRef: ref } : { status: 'SUCCESS' }));
+      router.replace({ pathname: '/pay/success', params: { id: e.id } });
     } finally {
       setBusy(null);
     }

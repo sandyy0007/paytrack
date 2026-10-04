@@ -5,7 +5,51 @@ export type QrSource = 'UPI_URI' | 'BHARAT_QR' | 'MANUAL_UPI' | 'NONE';
 export type ExpenseMode = 'Personal' | 'College' | 'Project' | 'Travel' | 'Family' | 'Work';
 export const EXPENSE_MODES: readonly ExpenseMode[] = ['Personal', 'College', 'Project', 'Travel', 'Family', 'Work'];
 
-export type ReconciliationStatus = 'MATCHED' | 'AMOUNT_MISMATCH' | 'UNRECONCILED';
+export type FinancialTransactionType = 'EXPENSE' | 'LENT' | 'BORROWED' | 'TRANSFER';
+export type LoanDirection = 'LENT' | 'BORROWED';
+
+export interface Loan {
+  id: string;
+  userId?: string | null;
+  personName: string;
+  personContact?: string | null;
+  direction: LoanDirection; // LENT: Lena Hai (asset), BORROWED: Dena Hai (liability)
+  originalAmountPaise: number;
+  repaidAmountPaise: number;
+  remainingAmountPaise: number;
+  status: 'OPEN' | 'PARTIALLY_REPAID' | 'SETTLED' | 'CANCELLED';
+  createdAt: string;
+  updatedAt: string;
+  dueDate?: string | null;
+  notes?: string | null;
+  linkedTransactionId?: string | null;
+  createdFromPaymentId?: string | null;
+}
+
+export interface Goal {
+  id: string;
+  name: string;
+  targetAmountPaise: number;
+  savedAmountPaise: number;
+  targetDate?: string | null;
+  category?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Subscription {
+  id: string;
+  name: string;
+  amountPaise: number;
+  frequency: 'MONTHLY' | 'WEEKLY' | 'YEARLY';
+  nextBillingDate?: string | null;
+  category: string;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ReconciliationStatus = 'MATCHED' | 'RECONCILED' | 'RESPONSE_RECEIVED' | 'UNCONFIRMED' | 'AMOUNT_MISMATCH' | 'UNRECONCILED';
 export type ConfidenceLevel = 'HIGH' | 'MEDIUM' | 'LOW';
 
 export interface SplitShare {
@@ -63,6 +107,7 @@ export interface Expense {
   mode?: ExpenseMode | null;
   splitData?: SplitData | null;
   recoveryDismissed?: boolean | null;
+  financialType?: FinancialTransactionType | null;
 }
 
 export interface ExpenseEvent {

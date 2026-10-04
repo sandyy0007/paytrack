@@ -1,6 +1,6 @@
 import { budgetUsage, formatINR, parseRupeesToPaise, paiseToDecimalString, spentInPeriod, type Budget, type BudgetPeriod } from '@paytrack/shared';
 import { useState } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Keyboard, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { BudgetProgress, usageColor } from '@/components/BudgetProgress';
 import { IconButton, PrimaryButton, SecondaryButton } from '@/components/Buttons';
@@ -32,8 +32,9 @@ function BudgetEditor({ budget, visible, onClose }: { budget: Budget | null; vis
   const [busy, setBusy] = useState(false);
 
   const save = async () => {
+    Keyboard.dismiss();
     const a = parseRupeesToPaise(amount);
-    if (!a.ok) return setErr('Enter a valid budget amount.');
+    if (!a.ok || a.paise <= 0) return setErr('Enter a valid budget amount (> ₹0).');
     const t = thresholds.split(/[,\s]+/).filter(Boolean).map(Number);
     if (!t.length || t.some((x) => !Number.isInteger(x) || x < 1 || x > 200) || t.length > 5) return setErr('Warnings must be 1–5 whole percentages, e.g. 75, 90, 100.');
     setBusy(true);
@@ -50,8 +51,28 @@ function BudgetEditor({ budget, visible, onClose }: { budget: Budget | null; vis
   };
 
   return (
-    <BottomSheet visible={visible} onClose={onClose} title={budget ? 'Edit budget' : 'New budget'}>
-      <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: space.lg }}>
+    <BottomSheet
+      visible={visible}
+      onClose={onClose}
+      title={budget ? 'Edit budget' : 'New budget'}
+      footer={
+        <>
+          {err ? <InlineNotice tone="error" text={err} /> : null}
+          <PrimaryButton
+            label={budget ? 'Save budget' : 'Create Budget'}
+            icon="wallet-outline"
+            onPress={save}
+            loading={busy}
+            size="lg"
+          />
+        </>
+      }
+    >
+      <ScrollView
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ gap: space.lg, paddingBottom: space.lg }}
+      >
         <View style={{ gap: space.sm }}>
           <Text style={type.label}>Category</Text>
           <View style={styles.chips}>
@@ -65,8 +86,6 @@ function BudgetEditor({ budget, visible, onClose }: { budget: Budget | null; vis
           <FilterChip label="Weekly" selected={period === 'WEEKLY'} onPress={() => setPeriod('WEEKLY')} />
         </View>
         <TextField label="Warn me at (%)" value={thresholds} onChangeText={setThresholds} keyboardType="numbers-and-punctuation" hint="Default 75, 90, 100" />
-        {err ? <InlineNotice tone="error" text={err} /> : null}
-        <PrimaryButton label="Save budget" onPress={save} loading={busy} size="md" />
       </ScrollView>
     </BottomSheet>
   );

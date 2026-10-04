@@ -1,7 +1,7 @@
 import { buildInsights, buildMoneyJourney, calculatePaymentDna, DEFAULT_CATEGORIES, formatINR, summarize } from '@paytrack/shared';
 import { router } from 'expo-router';
 import { useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { BarChart, DonutChart, LineChart } from '@/components/Charts';
 import { GlassCard } from '@/components/GlassCard';
@@ -13,7 +13,7 @@ import { EmptyState, LoadingState } from '@/components/States';
 import { TAB_CONTENT_INSET } from '@/components/TabBar';
 import { useLiveQuery } from '@/lib/dataVersion';
 import { tzOffsetMinutes } from '@/lib/format';
-import { expensesSince, listCategories } from '@/lib/repo';
+import { expensesSince, getUdhaarSummary, listCategories } from '@/lib/repo';
 import { syncNow } from '@/lib/sync';
 import { colors, space, type } from '@/theme/tokens';
 
@@ -24,11 +24,11 @@ export default function Analytics() {
   const q = useLiveQuery(async () => {
     const now = new Date();
     const since = new Date(now.getFullYear(), now.getMonth() - 6, 1);
-    const [rows, cats] = await Promise.all([expensesSince(since), listCategories()]);
+    const [rows, cats, udhaar] = await Promise.all([expensesSince(since), listCategories(), getUdhaarSummary()]);
     const s = summarize(rows, now, tzOffsetMinutes());
     const dna = calculatePaymentDna(rows);
     const journey = buildMoneyJourney(rows);
-    return { s, insights: buildInsights(s), cats, dna, journey };
+    return { s, insights: buildInsights(s), cats, dna, journey, udhaar };
   });
 
   const d = q.data;
@@ -60,6 +60,48 @@ export default function Analytics() {
               <AnalyticsCard label="Pending" value={String(d.s.pendingCount)} icon="time-outline" tint={colors.warning} sub={d.s.pendingCount ? `${formatINR(d.s.pendingPaise)} unconfirmed` : 'All clear'} />
             </View>
           </Animated.View>
+
+          {/* Financial Separation (Expenses vs Udhaar) */}
+          <GlassCard padding={space.lg}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: space.sm }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
+                <Icon name="shield-checkmark-outline" size={20} color={colors.primary} />
+                <View>
+                  <Text style={type.h3}>Financial Separation</Text>
+                  <Text style={type.caption}>True Outflow vs Recoverable Udhaar</Text>
+                </View>
+              </View>
+              <Pressable onPress={() => router.push('/udhaar')} hitSlop={8}>
+                <Text style={[type.label, { color: colors.primary }]}>Udhaar →</Text>
+              </Pressable>
+            </View>
+
+            <View style={{ gap: space.sm, marginTop: space.xs }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 4, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }}>
+                <View>
+                  <Text style={type.bodyStrong}>True Expenses (Month)</Text>
+                  <Text style={type.caption}>Counts toward budgets</Text>
+                </View>
+                <Text style={[type.bodyStrong, { color: colors.text }]}>{formatINR(d.s.monthPaise)}</Text>
+              </View>
+
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 4, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }}>
+                <View>
+                  <Text style={type.bodyStrong}>Money Lent (Lena Hai)</Text>
+                  <Text style={type.caption}>Recoverable · Excluded from expenses</Text>
+                </View>
+                <Text style={[type.bodyStrong, { color: colors.primary }]}>{formatINR(d.udhaar.totalLentPendingPaise)}</Text>
+              </View>
+
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 4 }}>
+                <View>
+                  <Text style={type.bodyStrong}>Money Borrowed (Dena Hai)</Text>
+                  <Text style={type.caption}>Payable · Excluded from income</Text>
+                </View>
+                <Text style={[type.bodyStrong, { color: colors.warning }]}>{formatINR(d.udhaar.totalBorrowedPendingPaise)}</Text>
+              </View>
+            </View>
+          </GlassCard>
 
           {/* Payment DNA Card */}
           <GlassCard padding={space.lg}>

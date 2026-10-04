@@ -110,6 +110,7 @@ export async function reconcileSchema(db: SQLite.SQLiteDatabase): Promise<void> 
     ['mode', 'TEXT DEFAULT "Personal"'],
     ['split_data', 'TEXT'],
     ['recovery_dismissed', 'INTEGER DEFAULT 0'],
+    ['financial_type', "TEXT DEFAULT 'EXPENSE'"],
   ];
 
   for (const [col, colType] of requiredColumns) {
@@ -129,6 +130,50 @@ export async function reconcileSchema(db: SQLite.SQLiteDatabase): Promise<void> 
     CREATE INDEX IF NOT EXISTS idx_exp_date ON expenses (expense_date DESC);
     CREATE INDEX IF NOT EXISTS idx_exp_status ON expenses (status);
     CREATE INDEX IF NOT EXISTS idx_exp_mode ON expenses (mode);
+    CREATE INDEX IF NOT EXISTS idx_exp_fin_type ON expenses (financial_type);
+
+    CREATE TABLE IF NOT EXISTS loans (
+      id TEXT PRIMARY KEY NOT NULL,
+      user_id TEXT,
+      person_name TEXT NOT NULL,
+      person_contact TEXT,
+      direction TEXT NOT NULL,
+      original_amount_paise INTEGER NOT NULL,
+      repaid_amount_paise INTEGER NOT NULL DEFAULT 0,
+      remaining_amount_paise INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'OPEN',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      due_date TEXT,
+      notes TEXT,
+      linked_transaction_id TEXT,
+      created_from_payment_id TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_loans_dir ON loans (direction);
+    CREATE INDEX IF NOT EXISTS idx_loans_status ON loans (status);
+
+    CREATE TABLE IF NOT EXISTS goals (
+      id TEXT PRIMARY KEY NOT NULL,
+      name TEXT NOT NULL,
+      target_amount_paise INTEGER NOT NULL,
+      saved_amount_paise INTEGER NOT NULL DEFAULT 0,
+      target_date TEXT,
+      category TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS subscriptions (
+      id TEXT PRIMARY KEY NOT NULL,
+      name TEXT NOT NULL,
+      amount_paise INTEGER NOT NULL,
+      frequency TEXT NOT NULL DEFAULT 'MONTHLY',
+      next_billing_date TEXT,
+      category TEXT,
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
   `);
 }
 
@@ -185,6 +230,6 @@ export async function kvSet(key: string, value: string, tx?: Tx): Promise<void> 
 export async function resetLocalData(): Promise<void> {
   const db = await getDb();
   await inTx(db, async (tx) => {
-    await tx.execAsync('DELETE FROM expense_events; DELETE FROM expenses; DELETE FROM budgets; DELETE FROM categories; DELETE FROM outbox; DELETE FROM kv;');
+    await tx.execAsync('DELETE FROM expense_events; DELETE FROM expenses; DELETE FROM loans; DELETE FROM goals; DELETE FROM subscriptions; DELETE FROM budgets; DELETE FROM categories; DELETE FROM outbox; DELETE FROM kv;');
   });
 }

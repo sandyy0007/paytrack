@@ -16,6 +16,7 @@ export interface AnalyticsExpense {
   deletedAt?: string | null;
   reason?: string | null;
   mode?: string | null;
+  financialType?: string | null;
 }
 
 const DAY = 86_400_000;
@@ -66,7 +67,7 @@ const PENDING: ExpenseStatus[] = [
 ];
 
 export function summarize(expenses: AnalyticsExpense[], now: Date, tzOffsetMin: number): Summary {
-  const live = expenses.filter((e) => !e.deletedAt);
+  const live = expenses.filter((e) => !e.deletedAt && (!e.financialType || e.financialType === 'EXPENSE'));
   const paid = live.filter((e) => e.status === 'PAID');
   const todayKey = localDayKey(now, tzOffsetMin);
   const weekKey = localWeekStartKey(now, tzOffsetMin);
@@ -187,7 +188,7 @@ export function spentInPeriod(
 ): number {
   const key = period === 'MONTHLY' ? localMonthKey(now, tzOffsetMin) : localWeekStartKey(now, tzOffsetMin);
   return expenses
-    .filter((e) => !e.deletedAt && e.status === 'PAID' && (category === '__ALL__' || e.category === category))
+    .filter((e) => !e.deletedAt && (!e.financialType || e.financialType === 'EXPENSE') && e.status === 'PAID' && (category === '__ALL__' || e.category === category))
     .filter((e) =>
       period === 'MONTHLY'
         ? localMonthKey(e.expenseDate, tzOffsetMin) === key
@@ -214,7 +215,7 @@ const DAYS_OF_WEEK = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'F
 
 /** Calculates private spending DNA strictly from PAID transactions. */
 export function calculatePaymentDna(expenses: AnalyticsExpense[]): PaymentDna {
-  const paid = expenses.filter((e) => !e.deletedAt && e.status === 'PAID');
+  const paid = expenses.filter((e) => !e.deletedAt && (!e.financialType || e.financialType === 'EXPENSE') && e.status === 'PAID');
   if (paid.length === 0) {
     return {
       averagePaymentPaise: 0,
@@ -318,7 +319,7 @@ export function analyzeRecurringPayee(expenses: AnalyticsExpense[], upiId: strin
   const targetId = upiId.trim().toLowerCase();
 
   const matching = expenses
-    .filter((e) => !e.deletedAt && e.status === 'PAID' && e.upiId && e.upiId.trim().toLowerCase() === targetId)
+    .filter((e) => !e.deletedAt && (!e.financialType || e.financialType === 'EXPENSE') && e.status === 'PAID' && e.upiId && e.upiId.trim().toLowerCase() === targetId)
     .sort((a, b) => Date.parse(a.expenseDate) - Date.parse(b.expenseDate));
 
   if (matching.length === 0) return null;
@@ -423,7 +424,7 @@ export function buildMoneyJourney(
   selectedDay?: string, // YYYY-MM-DD
 ): MoneyJourneyStep[] {
   const paid = expenses
-    .filter((e) => !e.deletedAt && e.status === 'PAID')
+    .filter((e) => !e.deletedAt && (!e.financialType || e.financialType === 'EXPENSE') && e.status === 'PAID')
     .sort((a, b) => Date.parse(a.expenseDate) - Date.parse(b.expenseDate));
 
   const filtered = selectedDay

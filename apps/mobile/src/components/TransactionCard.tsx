@@ -48,9 +48,15 @@ export const TransactionCard = memo(function TransactionCard({ expense: e, onPre
       </View>
       <View style={{ flex: 1, gap: 2 }}>
         <Text style={type.bodyStrong} numberOfLines={1}>{e.payeeName || e.upiId || 'Cash payment'}</Text>
-        <Text style={[type.label]} numberOfLines={1}>{e.reason} · {e.category}</Text>
+        <Text style={[type.label]} numberOfLines={1}>
+          {e.financialType === 'LENT' ? 'Money Lent · Udhaar' : `${e.reason} · ${e.category}`}
+        </Text>
         <Text style={type.caption}>{fmtRelative(e.expenseDate)}</Text>
-        {showUtr && ref_ ? <Text style={[type.caption, { color: colors.textSecondary }]} numberOfLines={1}>UTR {ref_}</Text> : null}
+        {showUtr && e.utr ? (
+          <Text style={[type.caption, { color: colors.textSecondary }]} numberOfLines={1}>UTR {e.utr}</Text>
+        ) : showUtr && e.transactionReference ? (
+          <Text style={[type.caption, { color: colors.textSecondary }]} numberOfLines={1}>Ref {e.transactionReference}</Text>
+        ) : null}
       </View>
       <View style={{ alignItems: 'flex-end', gap: 6 }}>
         <Text style={[type.money, e.status !== 'PAID' && { color: colors.textSecondary }]}>{formatINR(e.amountPaise)}</Text>

@@ -36,18 +36,43 @@ export default function Success() {
   const e = q.data;
   if (!e) return <Screen><LoadingState rows={2} /></Screen>;
   const when = e.paymentCompletedAt ?? e.updatedAt;
+  const hasUtr = Boolean(e.utr && /^[0-9]{12}$/.test(e.utr));
+  const isLent = e.financialType === 'LENT';
+
   return (
     <Screen footer={
       <>
-        <PrimaryButton label="DONE" onPress={() => router.replace('/home')} />
-        <SecondaryButton label="VIEW EXPENSE" size="md" onPress={() => router.replace({ pathname: '/activity/[id]', params: { id: e.id } })} />
+        <PrimaryButton
+          label={isLent ? "VIEW IN UDHAAR" : "DONE"}
+          onPress={() => isLent ? router.replace('/udhaar') : router.replace('/home')}
+        />
+        <SecondaryButton
+          label={isLent ? "GO TO HOME" : "VIEW EXPENSE"}
+          size="md"
+          onPress={() => isLent ? router.replace('/home') : router.replace({ pathname: '/activity/[id]', params: { id: e.id } })}
+        />
+        {!hasUtr && !isLent ? (
+          <SecondaryButton
+            label="Add bank UTR (Optional)"
+            size="md"
+            variant="ghost"
+            onPress={() => router.replace({ pathname: '/pay/utr', params: { id: e.id } })}
+          />
+        ) : null}
       </>
     }>
       <View style={{ alignItems: 'center', marginTop: space.lg }}>
         <SuccessCheck />
-        <Animated.Text entering={FadeInDown.delay(300)} style={[type.h1, { marginTop: -space.lg }]} accessibilityRole="header">
-          Payment Successful
+        <Animated.Text entering={FadeInDown.delay(300)} style={[type.h1, { marginTop: -space.lg, textAlign: 'center' }]} accessibilityRole="header">
+          {isLent ? "Money Lent Recorded" : hasUtr ? "Payment Successful" : "Payment Response Received"}
         </Animated.Text>
+        <Text style={[type.caption, { color: hasUtr ? colors.primary : colors.textSecondary, marginTop: space.xs, textAlign: 'center' }]}>
+          {isLent
+            ? "Tracked under Udhaar (Lena Hai). Excluded from expense totals."
+            : hasUtr
+            ? "Confirmed with 12-digit bank reference."
+            : "Recorded automatically. Bank reference can be linked anytime."}
+        </Text>
         <Animated.View entering={FadeInDown.delay(380)} style={{ marginTop: space.md }}>
           <AmountDisplay paise={e.amountPaise} size="lg" />
         </Animated.View>
@@ -58,18 +83,25 @@ export default function Success() {
             <Text style={type.label}>Status</Text>
             <StatusBadge status={e.status} />
           </View>
+          {isLent ? <Row k="Type" v="Money Lent (Udhaar)" /> : null}
           <Row k="Payee Name" v={e.payeeName ?? '—'} />
           <Row k="Payee UPI ID" v={e.upiId ?? '—'} />
           <Row k="Purpose / Category" v={`${e.reason} (${e.category})`} />
+          {e.utr ? <Row k="Bank UTR" v={e.utr} /> : null}
           {e.transactionId ? <Row k="Transaction ID" v={e.transactionId} /> : null}
-          <Row k="UTR / Ref" v={e.utr ?? e.approvalReference ?? e.transactionReference ?? '—'} />
+          {e.approvalReference && !e.utr ? <Row k="Approval Ref" v={e.approvalReference} /> : null}
+          {e.transactionReference && e.transactionReference !== e.transactionId && e.transactionReference !== e.utr ? (
+            <Row k="Transaction Ref" v={e.transactionReference} />
+          ) : null}
           <Row k="Expense ID" v={e.expenseCode} />
           <Row k="Date" v={fmtDate(when)} />
           <Row k="Time" v={fmtTime(when)} />
         </GlassCard>
       </Animated.View>
       <Text style={[type.caption, { textAlign: 'center', color: colors.textMuted, marginTop: space.sm }]}>
-        Payment recorded and verified. Your analytics are up to date.
+        {isLent
+          ? "This amount is recorded as a recoverable debt and won't affect your monthly spending."
+          : "Payment recorded and reconciled. Your analytics and budget are up to date."}
       </Text>
     </Screen>
   );

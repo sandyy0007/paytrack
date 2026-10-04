@@ -1,11 +1,23 @@
 import type { ReactNode } from 'react';
-import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeIn, FadeOut, SlideInDown, SlideOutDown, ZoomIn } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, elevation, radius, space, type } from '@/theme/tokens';
 import { PrimaryButton, SecondaryButton } from './Buttons';
 
-export function BottomSheet({ visible, onClose, title, children }: { visible: boolean; onClose: () => void; title?: string; children: ReactNode }) {
+export function BottomSheet({
+  visible,
+  onClose,
+  title,
+  children,
+  footer,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  title?: string;
+  children: ReactNode;
+  footer?: ReactNode;
+}) {
   const insets = useSafeAreaInsets();
   return (
     <Modal visible={visible} transparent animationType="none" onRequestClose={onClose} statusBarTranslucent navigationBarTranslucent>
@@ -14,10 +26,30 @@ export function BottomSheet({ visible, onClose, title, children }: { visible: bo
           <Animated.View entering={FadeIn.duration(180)} exiting={FadeOut.duration(150)} style={[StyleSheet.absoluteFill, styles.scrim]}>
             <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityLabel="Close" accessibilityRole="button" />
           </Animated.View>
-          <Animated.View entering={SlideInDown.springify().damping(20)} exiting={SlideOutDown.duration(180)} style={[styles.sheet, elevation.floating, { paddingBottom: insets.bottom + space.xl }]}>
-            <View style={styles.handle} />
-            {title ? <Text style={[type.h3, { marginBottom: space.lg }]} accessibilityRole="header">{title}</Text> : null}
-            {children}
+          <Animated.View
+            entering={SlideInDown.springify().damping(20)}
+            exiting={SlideOutDown.duration(180)}
+            style={[
+              styles.sheet,
+              elevation.floating,
+              { paddingBottom: footer ? 0 : Math.max(insets.bottom, 16) + space.lg },
+            ]}
+          >
+            <KeyboardAvoidingView
+              behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+              style={styles.sheetContent}
+            >
+              <View style={styles.handle} />
+              {title ? <Text style={[type.h3, { marginBottom: space.md }]} accessibilityRole="header">{title}</Text> : null}
+              <View style={styles.bodyWrap}>
+                {children}
+              </View>
+              {footer ? (
+                <View style={[styles.footerWrap, { paddingBottom: Math.max(insets.bottom, 16) + space.lg }]}>
+                  {footer}
+                </View>
+              ) : null}
+            </KeyboardAvoidingView>
           </Animated.View>
         </View>
       )}
@@ -64,7 +96,17 @@ const styles = StyleSheet.create({
   scrim: { backgroundColor: 'rgba(0,0,0,0.6)' },
   sheet: {
     position: 'absolute', left: 0, right: 0, bottom: 0, backgroundColor: colors.bgElevated, borderTopLeftRadius: radius.xxl,
-    borderTopRightRadius: radius.xxl, padding: space.xl, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.borderStrong, maxHeight: '88%',
+    borderTopRightRadius: radius.xxl, padding: space.xl, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.borderStrong, maxHeight: '94%',
+  },
+  sheetContent: {
+    maxHeight: '100%',
+  },
+  bodyWrap: {
+    flexShrink: 1,
+  },
+  footerWrap: {
+    paddingTop: space.md,
+    gap: space.sm,
   },
   handle: { alignSelf: 'center', width: 40, height: 5, borderRadius: 3, backgroundColor: colors.borderStrong, marginBottom: space.lg },
   centerWrap: { alignItems: 'center', justifyContent: 'center', padding: space.xl },

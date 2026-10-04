@@ -4,12 +4,13 @@
  * expense is never lost, even if the app is killed right after.
  */
 import {
-  applyTransition, classifyReference, DEFAULT_CATEGORIES, matchesQuery, needsAttention, statusBucket,
+  applyTransition, calculateExpenseConfidence, classifyReference, DEFAULT_CATEGORIES, matchesQuery, needsAttention, statusBucket,
   type Budget, type BudgetPeriod, type Category, type Expense, type ExpenseEvent, type ExpenseMode,
-  type ExpenseStatus, type PaymentMethod, type QrSource, type SplitData,
+  type ExpenseStatus, type FinancialTransactionType, type Goal, type Loan, type PaymentMethod, type QrSource,
+  type ReconciliationStatus, type SplitData, type Subscription,
 } from '@paytrack/shared';
 import { bumpData } from './dataVersion';
-import { getDb, inTx, type Tx } from './db';
+import { getDb, inTx, kvGet, kvSet, type Tx } from './db';
 import { nextExpenseCode, uuid } from './ids';
 
 /* ------------------------------- mapping ------------------------------- */
@@ -43,6 +44,7 @@ export function rowToExpense(r: Row): LocalExpense {
     mode: (r.mode as ExpenseMode) ?? 'Personal',
     splitData: r.split_data ? (typeof r.split_data === 'string' ? JSON.parse(r.split_data) : r.split_data) : null,
     recoveryDismissed: r.recovery_dismissed === 1 || r.recovery_dismissed === true,
+    financialType: (r.financial_type as FinancialTransactionType) ?? 'EXPENSE',
   };
 }
 
@@ -85,6 +87,7 @@ export interface NewExpenseInput {
   notes?: string | null;
   expenseDate?: string;
   mode?: ExpenseMode | null;
+  financialType?: FinancialTransactionType;
 }
 
 /**
@@ -99,6 +102,7 @@ export async function createExpense(input: NewExpenseInput): Promise<LocalExpens
   const code = await nextExpenseCode(now);
   const id = uuid();
   const baseMode = input.mode ?? 'Personal';
+  const finType = input.financialType ?? 'EXPENSE';
   const base: LocalExpense = {
     id, expenseCode: code, userId: null, amountPaise: input.amountPaise, currency: 'INR',
     payeeName: input.payeeName, upiId: input.upiId, reason: input.reason.trim(), category: input.category,
@@ -108,6 +112,7 @@ export async function createExpense(input: NewExpenseInput): Promise<LocalExpens
     updatedAt: at, deletedAt: null, syncState: 'pending', syncError: null,
     mode: baseMode,
     intendedAmountPaise: input.amountPaise,
+    financialType: finType,
   };
   const nextStatus: ExpenseStatus = input.paymentMethod === 'UPI' ? 'PENDING_PAYMENT' : 'PAID';
   const { expense: moved, event } = applyTransition(base, { to: nextStatus, at, eventId: uuid() });
@@ -115,10 +120,10 @@ export async function createExpense(input: NewExpenseInput): Promise<LocalExpens
   await inTx(db, async (tx) => {
     await tx.runAsync(
       `INSERT INTO expenses (id, expense_code, amount_paise, currency, payee_name, upi_id, reason, category, status, payment_method,
-         qr_source, qr_payload, notes, created_at, expense_date, updated_at, payment_completed_at, sync_state, mode, intended_amount_paise)
-       VALUES (?, ?, ?, 'INR', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+         qr_source, qr_payload, notes, created_at, expense_date, updated_at, payment_completed_at, sync_state, mode, intended_amount_paise, financial_type)
+       VALUES (?, ?, ?, 'INR', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
       id, code, base.amountPaise, base.payeeName, base.upiId, base.reason, base.category, moved.status, base.paymentMethod,
-      base.qrSource, base.qrPayload, base.notes, at, base.expenseDate, at, moved.paymentCompletedAt, baseMode, input.amountPaise,
+      base.qrSource, base.qrPayload, base.notes, at, base.expenseDate, at, moved.paymentCompletedAt, baseMode, input.amountPaise, finType,
     );
     const draftEventId = uuid();
     await insertEvent(tx, { id: draftEventId, expenseId: id, fromStatus: null, toStatus: 'DRAFT', at });
@@ -219,7 +224,7 @@ export async function saveSuccessfulPayment(
   const approvalReference = response?.approvalRefNo ?? null;
   const responseCode = response?.responseCode ?? '00';
 
-  // Extract UTR if 12-digit numeric, otherwise keep as transaction reference
+  // Strict UTR separation: ONLY 12-digit numeric bank reference is a UTR
   let utr: string | null = null;
   let transactionReference: string | null = null;
 
@@ -227,15 +232,33 @@ export async function saveSuccessfulPayment(
     utr = response.utr;
   } else if (approvalReference && /^[0-9]{12}$/.test(approvalReference)) {
     utr = approvalReference;
-  } else if (response?.txnRef) {
+  }
+
+  if (response?.txnRef) {
     transactionReference = response.txnRef;
-  } else if (approvalReference) {
+  } else if (approvalReference && !utr) {
     transactionReference = approvalReference;
   } else if (transactionId) {
     transactionReference = transactionId;
-  } else {
-    transactionReference = `TXN-${Date.now().toString(36).toUpperCase()}`;
   }
+
+  // Reconciliation status & confidence
+  const recStatus: ReconciliationStatus = utr
+    ? 'MATCHED'
+    : (transactionId || transactionReference || approvalReference)
+    ? 'RESPONSE_RECEIVED'
+    : 'UNCONFIRMED';
+
+  const conf = calculateExpenseConfidence({
+    status: 'PAID',
+    utr,
+    approvalReference,
+    transactionId,
+    transactionReference,
+    responseCode,
+    reconciliationStatus: recStatus,
+    paymentMethod: current.paymentMethod,
+  });
 
   // 1. Step to SUCCESS_RESPONSE if not already there
   let currentStep: LocalExpense | Expense = current;
@@ -270,15 +293,30 @@ export async function saveSuccessfulPayment(
   });
   const final = s2.expense;
 
+  // Auto-create loan if this was a LENT payment
+  if (current.financialType === 'LENT') {
+    const existingLoan = await db.getFirstAsync<{ id: string }>('SELECT id FROM loans WHERE created_from_payment_id = ?', id);
+    if (!existingLoan) {
+      const loanId = uuid();
+      await db.runAsync(
+        `INSERT INTO loans (id, person_name, direction, original_amount_paise, repaid_amount_paise, remaining_amount_paise, status, created_at, updated_at, notes, linked_transaction_id, created_from_payment_id)
+         VALUES (?, ?, 'LENT', ?, 0, ?, 'OPEN', ?, ?, ?, ?, ?)`,
+        loanId, current.payeeName ?? current.upiId ?? 'Borrower', current.amountPaise, current.amountPaise, at, at, current.reason, id, id,
+      );
+    }
+  }
+
   await inTx(db, async (tx) => {
     await tx.runAsync(
       `UPDATE expenses SET status = ?, utr = ?, transaction_reference = ?, payment_app = ?,
          payment_initiated_at = COALESCE(payment_initiated_at, ?), payment_completed_at = ?,
          updated_at = ?, transaction_id = ?, approval_reference = ?, response_code = ?,
+         reconciliation_status = ?, confidence_level = ?, confidence_reasons = ?,
          sync_state = 'pending' WHERE id = ?`,
-      final.status, final.utr, final.transactionReference, final.paymentApp ?? paymentApp ?? null,
+      final.status, utr, transactionReference, final.paymentApp ?? paymentApp ?? null,
       at, final.paymentCompletedAt ?? at, at,
-      final.transactionId ?? null, final.approvalReference ?? null, final.responseCode ?? null, id,
+      transactionId, approvalReference, responseCode,
+      recStatus, conf.level, JSON.stringify(conf.reasons), id,
     );
     if (step1Event) await insertEvent(tx, step1Event);
     await insertEvent(tx, s2.event);
@@ -433,6 +471,7 @@ export interface ExpensePatch {
   expenseDate?: string;
   mode?: ExpenseMode | null;
   splitData?: SplitData | null;
+  financialType?: FinancialTransactionType;
 }
 
 export async function updateExpense(id: string, patch: ExpensePatch): Promise<void> {
@@ -442,18 +481,23 @@ export async function updateExpense(id: string, patch: ExpensePatch): Promise<vo
     const cur = await tx.getFirstAsync<Row>('SELECT * FROM expenses WHERE id = ?', id);
     if (!cur) throw new Error('Expense not found');
     await tx.runAsync(
-      `UPDATE expenses SET reason = ?, category = ?, notes = ?, expense_date = ?, mode = ?, split_data = ?, updated_at = ?, sync_state = 'pending' WHERE id = ?`,
+      `UPDATE expenses SET reason = ?, category = ?, notes = ?, expense_date = ?, mode = ?, split_data = ?, financial_type = ?, updated_at = ?, sync_state = 'pending' WHERE id = ?`,
       patch.reason?.trim() ?? cur.reason,
       patch.category ?? cur.category,
       patch.notes !== undefined ? patch.notes : cur.notes,
       patch.expenseDate ?? cur.expense_date,
       patch.mode !== undefined ? patch.mode : cur.mode,
       patch.splitData !== undefined ? (patch.splitData ? JSON.stringify(patch.splitData) : null) : cur.split_data,
+      patch.financialType !== undefined ? patch.financialType : (cur.financial_type ?? 'EXPENSE'),
       at, id,
     );
     await enqueue(tx, 'expense.update', id, { id, patch: { ...patch, updatedAt: at } });
   });
   bumpData();
+}
+
+export async function setExpenseFinancialType(id: string, financialType: FinancialTransactionType): Promise<void> {
+  await updateExpense(id, { financialType });
 }
 
 export async function setExpenseMode(id: string, mode: ExpenseMode): Promise<void> {
@@ -622,5 +666,345 @@ export async function addCategory(name: string, color: string): Promise<void> {
   } catch {
     throw new Error('That category already exists.');
   }
+  bumpData();
+}
+
+/* --------------------------------- Udhaar --------------------------------- */
+
+export async function listLoans(direction?: 'LENT' | 'BORROWED'): Promise<Loan[]> {
+  const db = await getDb();
+  const query = direction
+    ? 'SELECT * FROM loans WHERE direction = ? ORDER BY created_at DESC'
+    : 'SELECT * FROM loans ORDER BY created_at DESC';
+  const rows = direction ? await db.getAllAsync<Row>(query, direction) : await db.getAllAsync<Row>(query);
+  return rows.map((r) => ({
+    id: r.id,
+    userId: r.user_id,
+    personName: r.person_name,
+    personContact: r.person_contact,
+    direction: r.direction as 'LENT' | 'BORROWED',
+    originalAmountPaise: r.original_amount_paise,
+    repaidAmountPaise: r.repaid_amount_paise,
+    remainingAmountPaise: r.remaining_amount_paise,
+    status: r.status as 'OPEN' | 'PARTIALLY_REPAID' | 'SETTLED' | 'CANCELLED',
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+    dueDate: r.due_date,
+    notes: r.notes,
+    linkedTransactionId: r.linked_transaction_id,
+    createdFromPaymentId: r.created_from_payment_id,
+  }));
+}
+
+export async function getLoan(id: string): Promise<Loan | null> {
+  const db = await getDb();
+  const r = await db.getFirstAsync<Row>('SELECT * FROM loans WHERE id = ?', id);
+  if (!r) return null;
+  return {
+    id: r.id,
+    userId: r.user_id,
+    personName: r.person_name,
+    personContact: r.person_contact,
+    direction: r.direction as 'LENT' | 'BORROWED',
+    originalAmountPaise: r.original_amount_paise,
+    repaidAmountPaise: r.repaid_amount_paise,
+    remainingAmountPaise: r.remaining_amount_paise,
+    status: r.status as 'OPEN' | 'PARTIALLY_REPAID' | 'SETTLED' | 'CANCELLED',
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+    dueDate: r.due_date,
+    notes: r.notes,
+    linkedTransactionId: r.linked_transaction_id,
+    createdFromPaymentId: r.created_from_payment_id,
+  };
+}
+
+export async function createLoan(input: {
+  personName: string;
+  direction: 'LENT' | 'BORROWED';
+  amountPaise?: number;
+  originalAmountPaise?: number;
+  dueDate?: string | null;
+  notes?: string | null;
+  personContact?: string | null;
+  linkedTransactionId?: string | null;
+}): Promise<Loan> {
+  const db = await getDb();
+  const id = uuid();
+  const at = new Date().toISOString();
+  const amount = input.amountPaise ?? input.originalAmountPaise ?? 0;
+  await db.runAsync(
+    `INSERT INTO loans (id, person_name, person_contact, direction, original_amount_paise, repaid_amount_paise, remaining_amount_paise, status, created_at, updated_at, due_date, notes, linked_transaction_id)
+     VALUES (?, ?, ?, ?, ?, 0, ?, 'OPEN', ?, ?, ?, ?, ?)`,
+    id, input.personName.trim(), input.personContact ?? null, input.direction, amount, amount, at, at, input.dueDate ?? null, input.notes ?? null, input.linkedTransactionId ?? null,
+  );
+  bumpData();
+  const created = await getLoan(id);
+  return created!;
+}
+
+export async function recordLoanRepayment(loanId: string, repayAmountPaise: number, notes?: string): Promise<Loan> {
+  const db = await getDb();
+  const loan = await getLoan(loanId);
+  if (!loan) throw new Error('Loan not found');
+  const at = new Date().toISOString();
+  const newRepaid = Math.min(loan.originalAmountPaise, loan.repaidAmountPaise + repayAmountPaise);
+  const newRemaining = Math.max(0, loan.originalAmountPaise - newRepaid);
+  const newStatus = newRemaining === 0 ? 'SETTLED' : 'PARTIALLY_REPAID';
+  const updatedNotes = notes ? (loan.notes ? `${loan.notes}\n${notes}` : notes) : loan.notes;
+
+  await db.runAsync(
+    `UPDATE loans SET repaid_amount_paise = ?, remaining_amount_paise = ?, status = ?, notes = ?, updated_at = ? WHERE id = ?`,
+    newRepaid, newRemaining, newStatus, updatedNotes ?? null, at, loanId,
+  );
+  bumpData();
+  return (await getLoan(loanId))!;
+}
+
+export async function settleLoan(loanId: string): Promise<Loan> {
+  const db = await getDb();
+  const loan = await getLoan(loanId);
+  if (!loan) throw new Error('Loan not found');
+  const at = new Date().toISOString();
+  await db.runAsync(
+    `UPDATE loans SET repaid_amount_paise = original_amount_paise, remaining_amount_paise = 0, status = 'SETTLED', updated_at = ? WHERE id = ?`,
+    at, loanId,
+  );
+  bumpData();
+  return (await getLoan(loanId))!;
+}
+
+export async function deleteLoan(loanId: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync('DELETE FROM loans WHERE id = ?', loanId);
+  bumpData();
+}
+
+export async function getUdhaarSummary(): Promise<{
+  totalLentPendingPaise: number;
+  totalBorrowedPendingPaise: number;
+  totalLentSettledPaise: number;
+  totalBorrowedSettledPaise: number;
+  activeLentCount: number;
+  activeBorrowedCount: number;
+}> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<{ direction: string; status: string; remaining: number; repaid: number; cnt: number }>(
+    `SELECT direction, status, SUM(remaining_amount_paise) as remaining, SUM(repaid_amount_paise) as repaid, COUNT(*) as cnt
+     FROM loans GROUP BY direction, status`,
+  );
+  let totalLentPendingPaise = 0;
+  let totalBorrowedPendingPaise = 0;
+  let totalLentSettledPaise = 0;
+  let totalBorrowedSettledPaise = 0;
+  let activeLentCount = 0;
+  let activeBorrowedCount = 0;
+
+  for (const r of rows) {
+    if (r.direction === 'LENT') {
+      if (r.status !== 'SETTLED' && r.status !== 'CANCELLED') {
+        totalLentPendingPaise += r.remaining ?? 0;
+        activeLentCount += r.cnt ?? 0;
+      } else if (r.status === 'SETTLED') {
+        totalLentSettledPaise += r.repaid ?? 0;
+      }
+    } else if (r.direction === 'BORROWED') {
+      if (r.status !== 'SETTLED' && r.status !== 'CANCELLED') {
+        totalBorrowedPendingPaise += r.remaining ?? 0;
+        activeBorrowedCount += r.cnt ?? 0;
+      } else if (r.status === 'SETTLED') {
+        totalBorrowedSettledPaise += r.repaid ?? 0;
+      }
+    }
+  }
+
+  return {
+    totalLentPendingPaise,
+    totalBorrowedPendingPaise,
+    totalLentSettledPaise,
+    totalBorrowedSettledPaise,
+    activeLentCount,
+    activeBorrowedCount,
+  };
+}
+
+/* --------------------------------- Goals --------------------------------- */
+
+export async function listGoals(): Promise<Goal[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<Row>('SELECT * FROM goals ORDER BY created_at DESC');
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    targetAmountPaise: r.target_amount_paise,
+    savedAmountPaise: r.saved_amount_paise,
+    targetDate: r.target_date,
+    category: r.category,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  }));
+}
+
+export async function createGoal(input: { name: string; targetAmountPaise: number; category?: string; targetDate?: string }): Promise<Goal> {
+  const db = await getDb();
+  const id = uuid();
+  const at = new Date().toISOString();
+  await db.runAsync(
+    'INSERT INTO goals (id, name, target_amount_paise, saved_amount_paise, target_date, category, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?, ?, ?)',
+    id, input.name.trim(), input.targetAmountPaise, input.targetDate ?? null, input.category ?? null, at, at,
+  );
+  bumpData();
+  const r = await db.getFirstAsync<Row>('SELECT * FROM goals WHERE id = ?', id);
+  return {
+    id: r!.id,
+    name: r!.name,
+    targetAmountPaise: r!.target_amount_paise,
+    savedAmountPaise: r!.saved_amount_paise,
+    targetDate: r!.target_date,
+    category: r!.category,
+    createdAt: r!.created_at,
+    updatedAt: r!.updated_at,
+  };
+}
+
+export async function contributeToGoal(id: string, amountPaise: number): Promise<void> {
+  const db = await getDb();
+  const at = new Date().toISOString();
+  await db.runAsync('UPDATE goals SET saved_amount_paise = saved_amount_paise + ?, updated_at = ? WHERE id = ?', amountPaise, at, id);
+  bumpData();
+}
+
+export async function deleteGoal(id: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync('DELETE FROM goals WHERE id = ?', id);
+  bumpData();
+}
+
+/* ----------------------------- Subscriptions ----------------------------- */
+
+export async function listSubscriptions(): Promise<Subscription[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<Row>('SELECT * FROM subscriptions WHERE active = 1 ORDER BY created_at DESC');
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    amountPaise: r.amount_paise,
+    frequency: r.frequency,
+    nextBillingDate: r.next_billing_date,
+    category: r.category,
+    active: r.active === 1,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  }));
+}
+
+export async function createSubscription(input: { name: string; amountPaise: number; frequency?: 'MONTHLY' | 'WEEKLY' | 'YEARLY'; nextBillingDate?: string; category?: string }): Promise<Subscription> {
+  const db = await getDb();
+  const id = uuid();
+  const at = new Date().toISOString();
+  await db.runAsync(
+    'INSERT INTO subscriptions (id, name, amount_paise, frequency, next_billing_date, category, active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)',
+    id, input.name.trim(), input.amountPaise, input.frequency ?? 'MONTHLY', input.nextBillingDate ?? null, input.category ?? 'Bills', at, at,
+  );
+  bumpData();
+  const r = await db.getFirstAsync<Row>('SELECT * FROM subscriptions WHERE id = ?', id);
+  return {
+    id: r!.id,
+    name: r!.name,
+    amountPaise: r!.amount_paise,
+    frequency: r!.frequency,
+    nextBillingDate: r!.next_billing_date,
+    category: r!.category,
+    active: r!.active === 1,
+    createdAt: r!.created_at,
+    updatedAt: r!.updated_at,
+  };
+}
+
+export async function deleteSubscription(id: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync('DELETE FROM subscriptions WHERE id = ?', id);
+  bumpData();
+}
+
+/* ------------------------- Intelligence & Position ----------------------- */
+
+export async function getPayeeMemory(payeeName: string | null, upiId: string | null): Promise<{
+  paymentCount: number;
+  totalPaidPaise: number;
+  averagePaidPaise: number;
+  lastPaidAt: string | null;
+  lastAmountPaise: number | null;
+  commonCategory: string | null;
+} | null> {
+  if (!payeeName && !upiId) return null;
+  const db = await getDb();
+  const rows = await db.getAllAsync<Row>(
+    `SELECT amount_paise, expense_date, category FROM expenses
+     WHERE deleted_at IS NULL AND status = 'PAID'
+       AND ((upi_id IS NOT NULL AND upi_id = ?) OR (payee_name IS NOT NULL AND payee_name = ?))
+     ORDER BY expense_date DESC`,
+    upiId ?? '', payeeName ?? '',
+  );
+  if (!rows.length) return null;
+  const paymentCount = rows.length;
+  const totalPaidPaise = rows.reduce((s, r) => s + (r.amount_paise ?? 0), 0);
+  const averagePaidPaise = Math.round(totalPaidPaise / paymentCount);
+  const lastPaidAt = rows[0].expense_date;
+  const lastAmountPaise = rows[0].amount_paise;
+  const catCount = new Map<string, number>();
+  for (const r of rows) {
+    if (r.category) catCount.set(r.category, (catCount.get(r.category) ?? 0) + 1);
+  }
+  let commonCategory: string | null = null;
+  let maxCat = 0;
+  for (const [c, n] of catCount) {
+    if (n > maxCat) {
+      maxCat = n;
+      commonCategory = c;
+    }
+  }
+  return { paymentCount, totalPaidPaise, averagePaidPaise, lastPaidAt, lastAmountPaise, commonCategory };
+}
+
+export async function checkDuplicatePayment(
+  payeeName: string | null,
+  upiId: string | null,
+  amountPaise: number,
+  windowHours: number = 24,
+): Promise<LocalExpense | null> {
+  const db = await getDb();
+  const since = new Date(Date.now() - windowHours * 60 * 60 * 1000).toISOString();
+  const rows = await db.getAllAsync<Row>(
+    `SELECT * FROM expenses
+     WHERE deleted_at IS NULL
+       AND status IN ('PAID', 'PENDING_PAYMENT', 'PAYMENT_APP_OPENED', 'USER_RETURNED')
+       AND amount_paise = ?
+       AND created_at >= ?
+       AND ((upi_id IS NOT NULL AND upi_id = ?) OR (payee_name IS NOT NULL AND payee_name = ?))
+     ORDER BY created_at DESC LIMIT 1`,
+    amountPaise, since, upiId ?? '', payeeName ?? '',
+  );
+  return rows.length ? rowToExpense(rows[0]) : null;
+}
+
+export async function getMoneyPosition(): Promise<{
+  bankBalancePaise: number;
+  receivablePaise: number;
+  payablePaise: number;
+  usableBalancePaise: number;
+  usablePaise: number;
+}> {
+  const kv = await kvGet('user_bank_balance_paise');
+  const bankBalancePaise = kv ? parseInt(kv, 10) : 0;
+  const udhaar = await getUdhaarSummary();
+  const receivablePaise = udhaar.totalLentPendingPaise;
+  const payablePaise = udhaar.totalBorrowedPendingPaise;
+  const usableBalancePaise = bankBalancePaise + receivablePaise - payablePaise;
+  return { bankBalancePaise, receivablePaise, payablePaise, usableBalancePaise, usablePaise: usableBalancePaise };
+}
+
+export async function setMoneyPosition(bankBalancePaise: number): Promise<void> {
+  await kvSet('user_bank_balance_paise', String(bankBalancePaise));
   bumpData();
 }

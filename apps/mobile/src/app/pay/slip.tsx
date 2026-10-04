@@ -13,7 +13,7 @@ import { ErrorState, LoadingState } from '@/components/States';
 import { UpiAppPicker } from '@/components/UpiAppPicker';
 import { useLiveQuery } from '@/lib/dataVersion';
 import { run } from '@/lib/payActions';
-import { getExpense, setExpenseMode, transition } from '@/lib/repo';
+import { getExpense, setExpenseFinancialType, setExpenseMode, transition } from '@/lib/repo';
 import { resumeHref } from '@/lib/routes';
 import { useSettings } from '@/lib/settings';
 import { appNameForPackage } from '@/lib/upiLaunch';
@@ -51,6 +51,45 @@ export default function Slip() {
     >
       <View style={{ marginTop: space.sm }}>
         <PaymentSlip data={e} />
+      </View>
+
+      {/* Payment Classification Selector */}
+      <View style={{ gap: space.xs, marginTop: space.sm }}>
+        <Text style={[type.label, { color: colors.textSecondary }]}>Payment Classification</Text>
+        <View style={{ flexDirection: 'row', gap: space.xs }}>
+          <ScalePressable
+            onPress={() => setExpenseFinancialType(e.id, 'EXPENSE')}
+            style={{
+              flex: 1,
+              paddingVertical: 8,
+              borderRadius: radius.md,
+              alignItems: 'center',
+              backgroundColor: (!e.financialType || e.financialType === 'EXPENSE') ? colors.primary : colors.bgElevated,
+              borderWidth: 1,
+              borderColor: (!e.financialType || e.financialType === 'EXPENSE') ? colors.primary : colors.border,
+            }}
+          >
+            <Text style={[type.caption, { color: (!e.financialType || e.financialType === 'EXPENSE') ? colors.onPrimary : colors.text, fontWeight: '700' }]}>
+              Expense (Kharcha)
+            </Text>
+          </ScalePressable>
+          <ScalePressable
+            onPress={() => setExpenseFinancialType(e.id, 'LENT')}
+            style={{
+              flex: 1,
+              paddingVertical: 8,
+              borderRadius: radius.md,
+              alignItems: 'center',
+              backgroundColor: e.financialType === 'LENT' ? colors.primary : colors.bgElevated,
+              borderWidth: 1,
+              borderColor: e.financialType === 'LENT' ? colors.primary : colors.border,
+            }}
+          >
+            <Text style={[type.caption, { color: e.financialType === 'LENT' ? colors.onPrimary : colors.text, fontWeight: '700' }]}>
+              Money Lent (Udhaar)
+            </Text>
+          </ScalePressable>
+        </View>
       </View>
 
       {/* Mode Selector */}
