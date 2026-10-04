@@ -614,16 +614,15 @@ export async function listBudgets(): Promise<Budget[]> {
 export async function upsertBudget(b: { id?: string; category: string; amountPaise: number; period: BudgetPeriod; thresholds: number[] }): Promise<void> {
   const db = await getDb();
   const at = new Date().toISOString();
-  const id = b.id ?? uuid();
   await inTx(db, async (tx) => {
     const clash = await tx.getFirstAsync<Row>(
-      'SELECT id FROM budgets WHERE deleted_at IS NULL AND category = ? AND period = ? AND id <> ?', b.category, b.period, id,
+      'SELECT id FROM budgets WHERE deleted_at IS NULL AND category = ? AND period = ?', b.category, b.period,
     );
-    if (clash) throw new Error('A budget for this category and period already exists.');
+    const id = b.id ?? clash?.id ?? uuid();
     await tx.runAsync(
       `INSERT INTO budgets (id, category, amount_paise, period, thresholds, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET category = excluded.category, amount_paise = excluded.amount_paise, period = excluded.period,
-         thresholds = excluded.thresholds, updated_at = excluded.updated_at`,
+         thresholds = excluded.thresholds, updated_at = excluded.updated_at, deleted_at = NULL`,
       id, b.category, b.amountPaise, b.period, JSON.stringify(b.thresholds), at, at,
     );
     await enqueue(tx, 'budget.upsert', id, { id, category: b.category, amountPaise: b.amountPaise, period: b.period, thresholds: b.thresholds });

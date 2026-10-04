@@ -71,6 +71,7 @@ function BudgetEditor({ budget, visible, onClose }: { budget: Budget | null; vis
       <ScrollView
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
+        style={{ flexShrink: 1 }}
         contentContainerStyle={{ gap: space.lg, paddingBottom: space.lg }}
       >
         <View style={{ gap: space.sm }}>

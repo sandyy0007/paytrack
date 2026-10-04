@@ -74,6 +74,7 @@ export default function RootLayout() {
             <Stack.Screen name="(tabs)" options={{ animation: 'fade' }} />
             <Stack.Screen name="pay" options={{ animation: 'slide_from_bottom', gestureEnabled: false }} />
             <Stack.Screen name="add-expense" options={{ animation: 'slide_from_bottom' }} />
+            <Stack.Screen name="udhaar" options={{ animation: 'slide_from_right' }} />
           </Stack>
         )}
       </SafeAreaProvider>

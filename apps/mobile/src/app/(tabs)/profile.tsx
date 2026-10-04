@@ -105,9 +105,9 @@ export default function Profile() {
       </SettingsGroup>
 
       <SettingsGroup title="About & App Info">
-        <SettingsRow icon="information-circle-outline" label="App Version" value="1.0.2 (Latest Build)" />
-        <SettingsRow icon="code-slash-outline" label="Build Identifier" value="20261004-V3-FINAL" />
-        <SettingsRow icon="server-outline" label="Schema Status" value="v3 (Reconciled)" />
+        <SettingsRow icon="information-circle-outline" label="App Version" value="1.0.3 (Latest Build)" />
+        <SettingsRow icon="code-slash-outline" label="Build Identifier" value="20261004-V4-FINAL" />
+        <SettingsRow icon="server-outline" label="Schema Status" value="v4 (Reconciled)" />
         <SettingsRow icon="bug-outline" label="Diagnostics" value="Open" onPress={() => router.push('/pay/debug')} />
       </SettingsGroup>
 
@@ -115,7 +115,7 @@ export default function Profile() {
         <SettingsRow icon="trash-outline" label="Delete account" danger onPress={() => router.push('/profile/security')} />
         <SettingsRow icon="log-out-outline" label={remote ? 'Logout' : 'Reset local profile'} danger onPress={() => setConfirmLogout(true)} />
       </SettingsGroup>
-      <Text style={[type.caption, { textAlign: 'center', color: colors.textMuted }]}>PayTrack 1.0.2 (20261004-V3-FINAL) · Pay First. Track Automatically.</Text>
+      <Text style={[type.caption, { textAlign: 'center', color: colors.textMuted }]}>PayTrack 1.0.3 (20261004-V4-FINAL) · Pay First. Track Automatically.</Text>
 
       <EditProfile key={String(editing)} visible={editing} onClose={() => setEditing(false)} />
       <ConfirmDialog

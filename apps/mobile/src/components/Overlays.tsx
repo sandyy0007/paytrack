@@ -32,7 +32,7 @@ export function BottomSheet({
             style={[
               styles.sheet,
               elevation.floating,
-              { paddingBottom: footer ? 0 : Math.max(insets.bottom, 16) + space.lg },
+              { paddingBottom: footer ? 0 : Math.max(insets.bottom, 20) + space.lg },
             ]}
           >
             <KeyboardAvoidingView
@@ -45,7 +45,7 @@ export function BottomSheet({
                 {children}
               </View>
               {footer ? (
-                <View style={[styles.footerWrap, { paddingBottom: Math.max(insets.bottom, 16) + space.lg }]}>
+                <View style={[styles.footerWrap, { paddingBottom: Math.max(insets.bottom, 24) + space.md }]}>
                   {footer}
                 </View>
               ) : null}
@@ -96,17 +96,20 @@ const styles = StyleSheet.create({
   scrim: { backgroundColor: 'rgba(0,0,0,0.6)' },
   sheet: {
     position: 'absolute', left: 0, right: 0, bottom: 0, backgroundColor: colors.bgElevated, borderTopLeftRadius: radius.xxl,
-    borderTopRightRadius: radius.xxl, padding: space.xl, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.borderStrong, maxHeight: '94%',
+    borderTopRightRadius: radius.xxl, paddingTop: space.xl, paddingHorizontal: space.xl, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.borderStrong, maxHeight: '88%', overflow: 'hidden',
   },
   sheetContent: {
-    maxHeight: '100%',
+    flexShrink: 1,
   },
   bodyWrap: {
     flexShrink: 1,
+    flexGrow: 0,
   },
   footerWrap: {
+    flexShrink: 0,
     paddingTop: space.md,
     gap: space.sm,
+    backgroundColor: colors.bgElevated,
   },
   handle: { alignSelf: 'center', width: 40, height: 5, borderRadius: 3, backgroundColor: colors.borderStrong, marginBottom: space.lg },
   centerWrap: { alignItems: 'center', justifyContent: 'center', padding: space.xl },

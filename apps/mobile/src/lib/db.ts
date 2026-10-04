@@ -123,14 +123,18 @@ export async function reconcileSchema(db: SQLite.SQLiteDatabase): Promise<void> 
     }
   }
 
-  // Create indexes for efficient querying
+  // Ensure budgets, loans, goals, subscriptions exist
   await db.execAsync(`
-    CREATE INDEX IF NOT EXISTS idx_exp_txnid ON expenses (transaction_id);
-    CREATE INDEX IF NOT EXISTS idx_exp_appref ON expenses (approval_reference);
-    CREATE INDEX IF NOT EXISTS idx_exp_date ON expenses (expense_date DESC);
-    CREATE INDEX IF NOT EXISTS idx_exp_status ON expenses (status);
-    CREATE INDEX IF NOT EXISTS idx_exp_mode ON expenses (mode);
-    CREATE INDEX IF NOT EXISTS idx_exp_fin_type ON expenses (financial_type);
+    CREATE TABLE IF NOT EXISTS budgets (
+      id TEXT PRIMARY KEY NOT NULL,
+      category TEXT NOT NULL,
+      amount_paise INTEGER NOT NULL CHECK (amount_paise > 0),
+      period TEXT NOT NULL,
+      thresholds TEXT NOT NULL DEFAULT '[75,90,100]',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      deleted_at TEXT
+    );
 
     CREATE TABLE IF NOT EXISTS loans (
       id TEXT PRIMARY KEY NOT NULL,
@@ -149,8 +153,6 @@ export async function reconcileSchema(db: SQLite.SQLiteDatabase): Promise<void> 
       linked_transaction_id TEXT,
       created_from_payment_id TEXT
     );
-    CREATE INDEX IF NOT EXISTS idx_loans_dir ON loans (direction);
-    CREATE INDEX IF NOT EXISTS idx_loans_status ON loans (status);
 
     CREATE TABLE IF NOT EXISTS goals (
       id TEXT PRIMARY KEY NOT NULL,
@@ -174,7 +176,44 @@ export async function reconcileSchema(db: SQLite.SQLiteDatabase): Promise<void> 
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
+
+    CREATE INDEX IF NOT EXISTS idx_exp_txnid ON expenses (transaction_id);
+    CREATE INDEX IF NOT EXISTS idx_exp_appref ON expenses (approval_reference);
+    CREATE INDEX IF NOT EXISTS idx_exp_date ON expenses (expense_date DESC);
+    CREATE INDEX IF NOT EXISTS idx_exp_status ON expenses (status);
+    CREATE INDEX IF NOT EXISTS idx_exp_mode ON expenses (mode);
+    CREATE INDEX IF NOT EXISTS idx_exp_fin_type ON expenses (financial_type);
+    CREATE INDEX IF NOT EXISTS idx_loans_dir ON loans (direction);
+    CREATE INDEX IF NOT EXISTS idx_loans_status ON loans (status);
   `);
+
+  // Dynamically reconcile loans columns in case table was created with an older schema
+  try {
+    const loanCols = await db.getAllAsync<{ name: string }>('PRAGMA table_info(loans)');
+    const loanColNames = new Set(loanCols.map((c) => c.name.toLowerCase()));
+    const requiredLoanCols: [string, string][] = [
+      ['user_id', 'TEXT'],
+      ['person_contact', 'TEXT'],
+      ['repaid_amount_paise', 'INTEGER NOT NULL DEFAULT 0'],
+      ['remaining_amount_paise', 'INTEGER NOT NULL DEFAULT 0'],
+      ['status', "TEXT NOT NULL DEFAULT 'OPEN'"],
+      ['due_date', 'TEXT'],
+      ['notes', 'TEXT'],
+      ['linked_transaction_id', 'TEXT'],
+      ['created_from_payment_id', 'TEXT'],
+    ];
+    for (const [col, colType] of requiredLoanCols) {
+      if (!loanColNames.has(col.toLowerCase())) {
+        try {
+          await db.execAsync(`ALTER TABLE loans ADD COLUMN ${col} ${colType};`);
+        } catch {
+          // ignore
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
 }
 
 async function open(): Promise<SQLite.SQLiteDatabase> {
