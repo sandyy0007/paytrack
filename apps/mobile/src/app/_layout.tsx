@@ -9,7 +9,9 @@ import { AppState, Text, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ErrorState } from '@/components/States';
+import { PinUnlockOverlay } from '@/components/PinUnlockOverlay';
 import { bootstrap } from '@/lib/bootstrap';
+import { useSettings } from '@/lib/settings';
 import { scheduleSync, startSyncListeners } from '@/lib/sync';
 import { colors } from '@/theme/tokens';
 
@@ -21,6 +23,10 @@ export default function RootLayout() {
   const [ready, setReady] = useState(false);
   const [bootError, setBootError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
+
+  const appLockEnabled = useSettings((s) => s.appLockEnabled);
+  const appLockPin = useSettings((s) => s.appLockPin);
+  const [isUnlocked, setIsUnlocked] = useState(false);
 
   useEffect(() => {
     bootstrap()
@@ -77,6 +83,9 @@ export default function RootLayout() {
             <Stack.Screen name="udhaar" options={{ animation: 'slide_from_right' }} />
           </Stack>
         )}
+        {appLockEnabled && !!appLockPin && !isUnlocked ? (
+          <PinUnlockOverlay onUnlocked={() => setIsUnlocked(true)} />
+        ) : null}
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

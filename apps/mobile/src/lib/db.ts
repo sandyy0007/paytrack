@@ -111,6 +111,9 @@ export async function reconcileSchema(db: SQLite.SQLiteDatabase): Promise<void> 
     ['split_data', 'TEXT'],
     ['recovery_dismissed', 'INTEGER DEFAULT 0'],
     ['financial_type', "TEXT DEFAULT 'EXPENSE'"],
+    ['payment_confirmation_source', 'TEXT'],
+    ['notes', 'TEXT'],
+    ['tags', 'TEXT'],
   ];
 
   for (const [col, colType] of requiredColumns) {
@@ -123,7 +126,7 @@ export async function reconcileSchema(db: SQLite.SQLiteDatabase): Promise<void> 
     }
   }
 
-  // Ensure budgets, loans, goals, subscriptions exist
+  // Ensure budgets, loans, goals, subscriptions, envelopes, and receipts exist
   await db.execAsync(`
     CREATE TABLE IF NOT EXISTS budgets (
       id TEXT PRIMARY KEY NOT NULL,
@@ -177,6 +180,28 @@ export async function reconcileSchema(db: SQLite.SQLiteDatabase): Promise<void> 
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS envelopes (
+      id TEXT PRIMARY KEY NOT NULL,
+      name TEXT NOT NULL,
+      allocated_paise INTEGER NOT NULL DEFAULT 0,
+      spent_paise INTEGER NOT NULL DEFAULT 0,
+      color TEXT NOT NULL DEFAULT '#6366F1',
+      icon TEXT NOT NULL DEFAULT 'folder-outline',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS receipts (
+      id TEXT PRIMARY KEY NOT NULL,
+      expense_id TEXT NOT NULL,
+      file_uri TEXT NOT NULL,
+      file_name TEXT NOT NULL,
+      mime_type TEXT NOT NULL,
+      file_size INTEGER NOT NULL DEFAULT 0,
+      notes TEXT,
+      created_at TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_exp_txnid ON expenses (transaction_id);
     CREATE INDEX IF NOT EXISTS idx_exp_appref ON expenses (approval_reference);
     CREATE INDEX IF NOT EXISTS idx_exp_date ON expenses (expense_date DESC);
@@ -185,6 +210,7 @@ export async function reconcileSchema(db: SQLite.SQLiteDatabase): Promise<void> 
     CREATE INDEX IF NOT EXISTS idx_exp_fin_type ON expenses (financial_type);
     CREATE INDEX IF NOT EXISTS idx_loans_dir ON loans (direction);
     CREATE INDEX IF NOT EXISTS idx_loans_status ON loans (status);
+    CREATE INDEX IF NOT EXISTS idx_receipts_exp ON receipts (expense_id);
   `);
 
   // Dynamically reconcile loans columns in case table was created with an older schema
@@ -269,6 +295,6 @@ export async function kvSet(key: string, value: string, tx?: Tx): Promise<void> 
 export async function resetLocalData(): Promise<void> {
   const db = await getDb();
   await inTx(db, async (tx) => {
-    await tx.execAsync('DELETE FROM expense_events; DELETE FROM expenses; DELETE FROM loans; DELETE FROM goals; DELETE FROM subscriptions; DELETE FROM budgets; DELETE FROM categories; DELETE FROM outbox; DELETE FROM kv;');
+    await tx.execAsync('DELETE FROM expense_events; DELETE FROM expenses; DELETE FROM loans; DELETE FROM goals; DELETE FROM subscriptions; DELETE FROM budgets; DELETE FROM categories; DELETE FROM envelopes; DELETE FROM receipts; DELETE FROM outbox; DELETE FROM kv;');
   });
 }

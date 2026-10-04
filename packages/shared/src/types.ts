@@ -49,7 +49,17 @@ export interface Subscription {
   updatedAt: string;
 }
 
-export type ReconciliationStatus = 'MATCHED' | 'RECONCILED' | 'RESPONSE_RECEIVED' | 'UNCONFIRMED' | 'AMOUNT_MISMATCH' | 'UNRECONCILED';
+export type ReconciliationStatus =
+  | 'MATCHED'
+  | 'RECONCILED'
+  | 'RECONCILED_MANUAL'
+  | 'RESPONSE_RECEIVED'
+  | 'CONFIRMED_UNRECONCILED'
+  | 'UNCONFIRMED'
+  | 'AMOUNT_MISMATCH'
+  | 'UNRECONCILED';
+
+export type PaymentConfirmationSource = 'AUTO_UPI' | 'USER_CONFIRMED' | 'MANUAL_UTR';
 export type ConfidenceLevel = 'HIGH' | 'MEDIUM' | 'LOW';
 
 export interface SplitShare {
@@ -108,6 +118,8 @@ export interface Expense {
   splitData?: SplitData | null;
   recoveryDismissed?: boolean | null;
   financialType?: FinancialTransactionType | null;
+  paymentConfirmationSource?: PaymentConfirmationSource | null;
+  tags?: string[] | null;
 }
 
 export interface ExpenseEvent {

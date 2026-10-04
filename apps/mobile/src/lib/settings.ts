@@ -2,6 +2,8 @@ import { secureDelete, secureGet, secureSet } from './secureStorage';
 import { create } from 'zustand';
 import type { ExpenseMode } from '@paytrack/shared';
 
+export type ThemeMode = 'dark' | 'light' | 'custom';
+
 export interface Settings {
   onboarded: boolean;
   /** Android package of the preferred UPI app, or null for the system chooser. */
@@ -13,6 +15,16 @@ export interface Settings {
   apiUrlOverride: string | null;
   shareNoteWithPayee: boolean;
   activeMode: ExpenseMode;
+  // Theme Engine
+  themeMode: ThemeMode;
+  customWallpaperUri: string | null;
+  customWallpaperOpacity: number;
+  customWallpaperBlur: number;
+  customWallpaperOverlay: 'dark' | 'light' | 'none';
+  // App Lock & Privacy
+  appLockEnabled: boolean;
+  appLockPin: string | null;
+  appLockBiometrics: boolean;
 }
 
 const DEFAULTS: Settings = {
@@ -25,6 +37,14 @@ const DEFAULTS: Settings = {
   apiUrlOverride: null,
   shareNoteWithPayee: false,
   activeMode: 'Personal',
+  themeMode: 'dark',
+  customWallpaperUri: null,
+  customWallpaperOpacity: 0.35,
+  customWallpaperBlur: 10,
+  customWallpaperOverlay: 'dark',
+  appLockEnabled: false,
+  appLockPin: null,
+  appLockBiometrics: false,
 };
 
 const KEY = 'paytrack.settings.v1';

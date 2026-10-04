@@ -1,7 +1,7 @@
 import { formatINR } from '@paytrack/shared';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
-import { Text, View } from 'react-native';
+import { Alert, Text, View } from 'react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { AmountDisplay } from '@/components/AmountDisplay';
 import { PrimaryButton, SecondaryButton } from '@/components/Buttons';
@@ -11,7 +11,7 @@ import { Screen } from '@/components/Screen';
 import { ErrorState, InlineNotice, LoadingState } from '@/components/States';
 import { StatusBadge } from '@/components/StatusBadge';
 import { useLiveQuery } from '@/lib/dataVersion';
-import { fmtRelative } from '@/lib/format';
+import { fmtDate, fmtTime } from '@/lib/format';
 import { haptic } from '@/lib/haptics';
 import { cancelPendingReminder } from '@/lib/notifications';
 import { ensureReturned, run } from '@/lib/payActions';
@@ -22,6 +22,7 @@ export default function Return() {
   const { id, hint, ref, resumed, manual } = useLocalSearchParams<{ id: string; hint?: string; ref?: string; resumed?: string; manual?: string }>();
   const q = useLiveQuery(() => getExpense(id), [id]);
   const [busy, setBusy] = useState<'yes' | 'no' | 'later' | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const e = q.data;
 
   if (q.loading && !e) return <Screen><LoadingState rows={2} /></Screen>;
@@ -29,6 +30,7 @@ export default function Return() {
   const answerable = ['PAYMENT_APP_OPENED', 'USER_RETURNED', 'UNCONFIRMED'].includes(e.status);
 
   const yes = async () => {
+    setActionError(null);
     setBusy('yes');
     try {
       await ensureReturned(e.id);
@@ -37,21 +39,34 @@ export default function Return() {
       // Auto-save successful payment without forcing manual UTR entry
       await run(() => saveSuccessfulPayment(e.id, ref ? { status: 'SUCCESS', txnRef: ref } : { status: 'SUCCESS' }));
       router.replace({ pathname: '/pay/success', params: { id: e.id } });
+    } catch (err) {
+      console.error('Payment confirmation error:', err);
+      const msg = err instanceof Error ? err.message : 'Could not confirm payment. Please try again.';
+      setActionError(msg);
+      Alert.alert('Payment Confirmation', msg);
     } finally {
       setBusy(null);
     }
   };
+
   const no = async () => {
+    setActionError(null);
     setBusy('no');
     try {
       await ensureReturned(e.id);
       void cancelPendingReminder(e.id);
       router.replace({ pathname: '/pay/failure', params: { id: e.id } });
+    } catch (err) {
+      console.error('Payment failure recording error:', err);
+      const msg = err instanceof Error ? err.message : 'Could not mark payment as failed.';
+      setActionError(msg);
     } finally {
       setBusy(null);
     }
   };
+
   const later = async () => {
+    setActionError(null);
     setBusy('later');
     try {
       if (e.status !== 'UNCONFIRMED') {
@@ -59,49 +74,110 @@ export default function Return() {
         await run(() => transition(e.id, 'UNCONFIRMED', { meta: { reason: 'user_deferred' } }));
       }
       router.replace('/home');
+    } catch (err) {
+      console.error('Defer payment error:', err);
+      router.replace('/home');
     } finally {
       setBusy(null);
     }
   };
 
   return (
-    <Screen back={() => router.replace('/home')} title="Confirm payment" footer={answerable ? (
-      <>
-        <PrimaryButton label="YES, PAYMENT DONE" icon="checkmark-circle" onPress={yes} loading={busy === 'yes'} disabled={!!busy} />
-        <SecondaryButton label="PAYMENT FAILED / CANCELLED" icon="close-circle-outline" variant="danger" onPress={no} loading={busy === 'no'} disabled={!!busy} />
-        <SecondaryButton label="I'm not sure yet — decide later" variant="ghost" size="md" onPress={later} loading={busy === 'later'} disabled={!!busy} />
-      </>
-    ) : (
-      <PrimaryButton label="View expense" onPress={() => router.replace({ pathname: '/activity/[id]', params: { id: e.id } })} />
-    )}>
-      <Animated.View entering={FadeInDown.duration(400)} style={{ gap: space.sm, marginTop: space.md }}>
-        <Text style={type.h1} accessibilityRole="header">Did you complete this payment?</Text>
+    <Screen
+      back={() => router.replace('/home')}
+      title="Confirm payment"
+      footer={
+        answerable ? (
+          <>
+            <PrimaryButton
+              label="YES, PAYMENT DONE"
+              icon="checkmark-circle"
+              onPress={yes}
+              loading={busy === 'yes'}
+              disabled={!!busy}
+            />
+            <SecondaryButton
+              label="PAYMENT FAILED / CANCELLED"
+              icon="close-circle-outline"
+              variant="danger"
+              onPress={no}
+              loading={busy === 'no'}
+              disabled={!!busy}
+            />
+            <SecondaryButton
+              label="I'm not sure yet — decide later"
+              variant="ghost"
+              size="md"
+              onPress={later}
+              loading={busy === 'later'}
+              disabled={!!busy}
+            />
+          </>
+        ) : (
+          <PrimaryButton
+            label="View expense"
+            onPress={() => router.replace({ pathname: '/activity/[id]', params: { id: e.id } })}
+          />
+        )
+      }
+    >
+      <Animated.View entering={FadeInDown.duration(400)} style={{ gap: space.xs, marginTop: space.sm }}>
+        <Text style={type.h1} accessibilityRole="header">
+          Did you complete this payment?
+        </Text>
         <Text style={[type.body, { color: colors.textSecondary }]}>
-          {resumed ? 'Welcome back — it looks like PayTrack closed while you were paying. ' : ''}
-          Opening a UPI app doesn't mean the payment went through, so please confirm.
+          {resumed ? 'Welcome back. ' : ''}
+          Please confirm if the payment succeeded in your UPI app.
         </Text>
       </Animated.View>
 
-      {hint === 'SUCCESS' ? <InlineNotice tone="success" icon="information-circle-outline" text="Your UPI app reported this payment as successful. Please confirm what you saw." /> : null}
-      {hint === 'FAILURE' ? <InlineNotice tone="warning" icon="information-circle-outline" text="Your UPI app reported this payment as failed. Please confirm what you saw." /> : null}
-      {hint === 'SUBMITTED' ? <InlineNotice icon="information-circle-outline" text="Your UPI app reported this payment as pending with the bank. Check the status there before confirming." /> : null}
+      {actionError ? (
+        <InlineNotice
+          tone="error"
+          icon="alert-circle-outline"
+          text={actionError}
+        />
+      ) : null}
+
+      {hint === 'SUCCESS' ? (
+        <InlineNotice tone="success" icon="information-circle-outline" text="Your UPI app reported this payment as successful." />
+      ) : null}
+      {hint === 'FAILURE' ? (
+        <InlineNotice tone="warning" icon="information-circle-outline" text="Your UPI app reported this payment as failed." />
+      ) : null}
+      {hint === 'SUBMITTED' ? (
+        <InlineNotice icon="information-circle-outline" text="Your UPI app reported this payment as pending bank approval." />
+      ) : null}
 
       <GlassCard variant="hero" padding={space.xl}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.md }}>
           <Avatar name={e.payeeName} size={48} />
           <View style={{ flex: 1 }}>
             <Text style={type.h3} numberOfLines={1}>{e.payeeName ?? e.upiId}</Text>
-            <Text style={type.caption} numberOfLines={1}>{e.upiId}</Text>
+            {e.upiId ? <Text style={type.caption} numberOfLines={1}>{e.upiId}</Text> : null}
           </View>
         </View>
-        <View style={{ marginTop: space.lg }}><AmountDisplay paise={e.amountPaise} size="lg" /></View>
-        <Text style={[type.label, { marginTop: space.xs }]}>{e.reason} · {e.category}</Text>
-        <View style={{ gap: space.sm, marginTop: space.lg }}>
+
+        <View style={{ marginTop: space.lg }}>
+          <AmountDisplay paise={e.amountPaise} size="lg" />
+        </View>
+
+        <View style={{ marginTop: space.sm, gap: space.xxs }}>
+          <Text style={[type.bodyStrong, { color: colors.text }]}>{e.reason}</Text>
+          <Text style={[type.caption, { color: colors.textSecondary }]}>Category: {e.category}</Text>
+        </View>
+
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: space.lg, paddingTop: space.md, borderTopWidth: 1, borderTopColor: colors.border }}>
           <StatusBadge status={e.status} compact />
-          <Text style={type.caption}>{fmtRelative(e.createdAt)} · {e.expenseCode}</Text>
+          <Text style={type.caption}>
+            {fmtDate(e.expenseDate)} · {fmtTime(e.expenseDate)}
+          </Text>
         </View>
       </GlassCard>
-      {!answerable ? <InlineNotice text={`This payment is already ${e.status === 'PAID' ? 'recorded as paid' : 'resolved'} (${formatINR(e.amountPaise)}).`} /> : null}
+
+      {!answerable ? (
+        <InlineNotice text={`This payment is already ${e.status === 'PAID' ? 'recorded as paid' : 'resolved'} (${formatINR(e.amountPaise)}).`} />
+      ) : null}
     </Screen>
   );
 }

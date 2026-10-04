@@ -92,6 +92,7 @@ export default function Profile() {
       </SettingsGroup>
 
       <SettingsGroup title="Preferences">
+        <SettingsRow icon="color-palette-outline" label="Appearance & Theme" value={settings.themeMode.toUpperCase()} onPress={() => router.push('/profile/settings')} />
         <SettingsRow icon="pricetag-outline" label="Default category" value={settings.defaultCategory ?? 'None'} onPress={() => router.push('/profile/settings')} />
         <SettingsRow icon="phone-portrait-outline" label="UPI app" value={appNameForPackage(settings.preferredUpiPackage) ?? 'Ask every time'} onPress={() => router.push('/profile/settings')} />
         <SettingsRow icon="wallet-outline" label="Budget settings" onPress={() => router.push('/budgets')} />
@@ -99,15 +100,15 @@ export default function Profile() {
       </SettingsGroup>
 
       <SettingsGroup title="Data & safety">
-        <SettingsRow icon="lock-closed-outline" label="Security" onPress={() => router.push('/profile/security')} />
+        <SettingsRow icon="lock-closed-outline" label="Security & App Lock" value={settings.appLockEnabled ? 'PIN Protected' : 'None'} onPress={() => router.push('/profile/security')} />
         <SettingsRow icon="eye-off-outline" label="Privacy" onPress={() => router.push('/profile/privacy')} />
-        <SettingsRow icon="download-outline" label="Export data" value="CSV · PDF" onPress={() => router.push('/profile/export')} />
+        <SettingsRow icon="download-outline" label="Export & Backup" value="CSV · PDF · JSON" onPress={() => router.push('/profile/export')} />
       </SettingsGroup>
 
       <SettingsGroup title="About & App Info">
-        <SettingsRow icon="information-circle-outline" label="App Version" value="1.0.3 (Latest Build)" />
-        <SettingsRow icon="code-slash-outline" label="Build Identifier" value="20261004-V4-FINAL" />
-        <SettingsRow icon="server-outline" label="Schema Status" value="v4 (Reconciled)" />
+        <SettingsRow icon="information-circle-outline" label="App Version" value="1.0.4 (Latest Build)" />
+        <SettingsRow icon="code-slash-outline" label="Build Identifier" value="20261004-V5-FINAL" />
+        <SettingsRow icon="server-outline" label="Schema Status" value="v5 (Reconciled)" />
         <SettingsRow icon="bug-outline" label="Diagnostics" value="Open" onPress={() => router.push('/pay/debug')} />
       </SettingsGroup>
 
@@ -115,7 +116,7 @@ export default function Profile() {
         <SettingsRow icon="trash-outline" label="Delete account" danger onPress={() => router.push('/profile/security')} />
         <SettingsRow icon="log-out-outline" label={remote ? 'Logout' : 'Reset local profile'} danger onPress={() => setConfirmLogout(true)} />
       </SettingsGroup>
-      <Text style={[type.caption, { textAlign: 'center', color: colors.textMuted }]}>PayTrack 1.0.3 (20261004-V4-FINAL) · Pay First. Track Automatically.</Text>
+      <Text style={[type.caption, { textAlign: 'center', color: colors.textMuted }]}>PayTrack 1.0.4 (20261004-V5-FINAL) · Pay First. Track Automatically.</Text>
 
       <EditProfile key={String(editing)} visible={editing} onClose={() => setEditing(false)} />
       <ConfirmDialog

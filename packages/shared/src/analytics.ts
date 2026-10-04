@@ -461,3 +461,233 @@ export function buildMoneyJourney(
   });
 }
 
+/* -------------------- Feature A: Cashflow Forecast ------------------------ */
+
+export interface CashflowForecast {
+  days: 7 | 30 | 90;
+  historicalDailyAveragePaise: number;
+  projectedTotalPaise: number;
+  projectedCurve: { date: string; cumulativePaise: number; dailyPaise: number }[];
+  projectedTopCategories: { category: string; projectedPaise: number }[];
+}
+
+export function calculateCashflowForecast(
+  expenses: AnalyticsExpense[],
+  days: 7 | 30 | 90 = 30,
+  now: Date = new Date(),
+): CashflowForecast {
+  const paid = expenses.filter(
+    (e) => !e.deletedAt && (!e.financialType || e.financialType === 'EXPENSE') && e.status === 'PAID',
+  );
+
+  const nowMs = now.getTime();
+  const past30DaysMs = 30 * 86_400_000;
+  const recentExpenses = paid.filter((e) => {
+    const t = Date.parse(e.expenseDate);
+    return !Number.isNaN(t) && nowMs - t <= past30DaysMs && nowMs - t >= 0;
+  });
+
+  const recentTotal = recentExpenses.reduce((s, e) => s + e.amountPaise, 0);
+  const baselineDailyAverage = recentExpenses.length > 0
+    ? Math.round(recentTotal / 30)
+    : paid.length > 0
+    ? Math.round(paid.reduce((s, e) => s + e.amountPaise, 0) / Math.max(1, paid.length))
+    : 0;
+
+  // Category proportions from recent history
+  const catTotals = new Map<string, number>();
+  for (const e of recentExpenses) {
+    catTotals.set(e.category, (catTotals.get(e.category) ?? 0) + e.amountPaise);
+  }
+
+  const projectedTotalPaise = baselineDailyAverage * days;
+  const projectedTopCategories = [...catTotals.entries()]
+    .map(([category, sum]) => ({
+      category,
+      projectedPaise: recentTotal > 0 ? Math.round((sum / recentTotal) * projectedTotalPaise) : 0,
+    }))
+    .sort((a, b) => b.projectedPaise - a.projectedPaise);
+
+  const projectedCurve: CashflowForecast['projectedCurve'] = [];
+  let running = 0;
+  for (let i = 1; i <= days; i++) {
+    const targetDate = new Date(nowMs + i * 86_400_000).toISOString().slice(0, 10);
+    running += baselineDailyAverage;
+    projectedCurve.push({
+      date: targetDate,
+      dailyPaise: baselineDailyAverage,
+      cumulativePaise: running,
+    });
+  }
+
+  return {
+    days,
+    historicalDailyAveragePaise: baselineDailyAverage,
+    projectedTotalPaise,
+    projectedCurve,
+    projectedTopCategories,
+  };
+}
+
+/* -------------------- Feature C: Expense Anomaly Detection ---------------- */
+
+export interface ExpenseAnomaly {
+  expenseId: string;
+  payeeName: string;
+  category: string;
+  amountPaise: number;
+  expectedAveragePaise: number;
+  severity: 'HIGH' | 'MEDIUM';
+  reason: string;
+  expenseDate: string;
+}
+
+export function detectExpenseAnomalies(
+  expenses: (AnalyticsExpense & { id?: string })[],
+): ExpenseAnomaly[] {
+  const paid = expenses.filter(
+    (e) => !e.deletedAt && (!e.financialType || e.financialType === 'EXPENSE') && e.status === 'PAID',
+  );
+
+  // Group by category to find average and median
+  const byCategory = new Map<string, number[]>();
+  for (const e of paid) {
+    const list = byCategory.get(e.category) ?? [];
+    list.push(e.amountPaise);
+    byCategory.set(e.category, list);
+  }
+
+  const categoryStats = new Map<string, { baseline: number; stdDev: number }>();
+  for (const [cat, amounts] of byCategory.entries()) {
+    if (amounts.length >= 2) {
+      const sorted = [...amounts].sort((a, b) => a - b);
+      const mid = Math.floor(sorted.length / 2);
+      const median = sorted.length % 2 === 0 ? (sorted[mid - 1]! + sorted[mid]!) / 2 : sorted[mid]!;
+      const avg = amounts.reduce((s, a) => s + a, 0) / amounts.length;
+      const variance = amounts.reduce((s, a) => s + Math.pow(a - avg, 2), 0) / amounts.length;
+      // Use minimum of avg and median to avoid outlier masking
+      const baseline = Math.min(avg, median);
+      categoryStats.set(cat, { baseline, stdDev: Math.sqrt(variance) });
+    } else if (amounts.length === 1) {
+      categoryStats.set(cat, { baseline: amounts[0]!, stdDev: 0 });
+    }
+  }
+
+  const anomalies: ExpenseAnomaly[] = [];
+
+  for (const e of paid) {
+    const stats = categoryStats.get(e.category);
+    if (!stats || stats.baseline <= 0) continue;
+
+    const ratio = e.amountPaise / stats.baseline;
+    const diffPaise = e.amountPaise - stats.baseline;
+
+    if (ratio >= 2.0 && diffPaise >= 25_000) {
+      const isHigh = ratio >= 3.5 || (stats.stdDev > 0 && e.amountPaise >= stats.baseline + 2 * stats.stdDev);
+      anomalies.push({
+        expenseId: e.id ?? `exp-${e.expenseDate}`,
+        payeeName: e.payeeName || e.upiId || 'Direct Payment',
+        category: e.category,
+        amountPaise: e.amountPaise,
+        expectedAveragePaise: Math.round(stats.baseline),
+        severity: isHigh ? 'HIGH' : 'MEDIUM',
+        reason: `${Math.round(ratio * 10) / 10}x higher than your typical ${e.category} spending (${formatINR(Math.round(stats.baseline))})`,
+        expenseDate: e.expenseDate,
+      });
+    }
+  }
+
+  return anomalies.sort((a, b) => Date.parse(b.expenseDate) - Date.parse(a.expenseDate));
+}
+
+/* -------------------- Feature J: Financial Health Score ------------------- */
+
+export interface HealthScoreFactor {
+  title: string;
+  score: number;
+  maxScore: number;
+  status: 'EXCELLENT' | 'GOOD' | 'NEEDS_ATTENTION';
+  detail: string;
+}
+
+export interface FinancialHealthScore {
+  totalScore: number; // 0 - 100
+  rating: 'EXCELLENT' | 'GOOD' | 'FAIR' | 'NEEDS_ATTENTION';
+  factors: HealthScoreFactor[];
+}
+
+export function calculateFinancialHealthScore(params: {
+  expenses: AnalyticsExpense[];
+  budgets?: { amountPaise: number; spentPaise: number }[];
+  loans?: { direction: 'LENT' | 'BORROWED'; remainingAmountPaise: number; originalAmountPaise: number; status: string }[];
+  envelopesCount?: number;
+}): FinancialHealthScore {
+  const { expenses, budgets = [], loans = [], envelopesCount = 0 } = params;
+  const factors: HealthScoreFactor[] = [];
+
+  // 1. Budget Adherence (35 pts)
+  let budgetScore = 35;
+  let budgetDetail = 'No active budgets set.';
+  let budgetStatus: HealthScoreFactor['status'] = 'GOOD';
+  if (budgets.length > 0) {
+    const overBudgets = budgets.filter((b) => b.spentPaise > b.amountPaise).length;
+    const ratio = overBudgets / budgets.length;
+    if (overBudgets === 0) {
+      budgetScore = 35;
+      budgetDetail = `All ${budgets.length} budgets are on track.`;
+      budgetStatus = 'EXCELLENT';
+    } else {
+      budgetScore = Math.max(10, Math.round(35 * (1 - ratio)));
+      budgetDetail = `${overBudgets} of ${budgets.length} budgets exceeded.`;
+      budgetStatus = 'NEEDS_ATTENTION';
+    }
+  }
+  factors.push({ title: 'Budget Adherence', score: budgetScore, maxScore: 35, status: budgetStatus, detail: budgetDetail });
+
+  // 2. Spending Consistency (25 pts)
+  const paid = expenses.filter((e) => !e.deletedAt && (!e.financialType || e.financialType === 'EXPENSE') && e.status === 'PAID');
+  let consistencyScore = 20;
+  let consistencyDetail = 'Steady recorded transaction volume.';
+  let consistencyStatus: HealthScoreFactor['status'] = 'GOOD';
+  if (paid.length >= 10) {
+    consistencyScore = 25;
+    consistencyStatus = 'EXCELLENT';
+    consistencyDetail = 'Strong tracking consistency across recent transactions.';
+  } else if (paid.length >= 3) {
+    consistencyScore = 20;
+    consistencyStatus = 'GOOD';
+    consistencyDetail = 'Growing transaction history.';
+  } else {
+    consistencyScore = 15;
+    consistencyStatus = 'NEEDS_ATTENTION';
+    consistencyDetail = 'Log more payments to build baseline history.';
+  }
+  factors.push({ title: 'Spending Consistency', score: consistencyScore, maxScore: 25, status: consistencyStatus, detail: consistencyDetail });
+
+  // 3. Debt Management (25 pts)
+  let debtScore = 25;
+  let debtDetail = 'No outstanding borrowed debts.';
+  let debtStatus: HealthScoreFactor['status'] = 'EXCELLENT';
+  const borrowed = loans.filter((l) => l.direction === 'BORROWED' && l.status === 'OPEN');
+  if (borrowed.length > 0) {
+    const totalBorrowedPaise = borrowed.reduce((s, l) => s + l.remainingAmountPaise, 0);
+    debtScore = 15;
+    debtStatus = 'NEEDS_ATTENTION';
+    debtDetail = `${borrowed.length} active debts (${formatINR(totalBorrowedPaise)}) to repay.`;
+  }
+  factors.push({ title: 'Debt Management', score: debtScore, maxScore: 25, status: debtStatus, detail: debtDetail });
+
+  // 4. Planning & Envelopes (15 pts)
+  let envelopeScore = 15;
+  let envelopeDetail = envelopesCount > 0 ? `${envelopesCount} cash envelopes active.` : 'Create cash envelopes to boost financial planning.';
+  let envelopeStatus: HealthScoreFactor['status'] = envelopesCount > 0 ? 'EXCELLENT' : 'GOOD';
+  if (envelopesCount === 0) envelopeScore = 10;
+  factors.push({ title: 'Planning & Envelopes', score: envelopeScore, maxScore: 15, status: envelopeStatus, detail: envelopeDetail });
+
+  const totalScore = Math.min(100, Math.max(0, factors.reduce((sum, f) => sum + f.score, 0)));
+  const rating: FinancialHealthScore['rating'] =
+    totalScore >= 80 ? 'EXCELLENT' : totalScore >= 65 ? 'GOOD' : totalScore >= 50 ? 'FAIR' : 'NEEDS_ATTENTION';
+
+  return { totalScore, rating, factors };
+}
+

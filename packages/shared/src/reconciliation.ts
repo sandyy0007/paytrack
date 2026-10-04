@@ -49,11 +49,15 @@ export function calculateExpenseConfidence(expense: Partial<Expense>): {
 
   // PAID status checks
   if (hasValidUtr) {
-    reasons.push('Verified with 12-digit bank UTR / RRN');
+    if (expense.reconciliationStatus === 'RECONCILED_MANUAL' || expense.paymentConfirmationSource === 'MANUAL_UTR') {
+      reasons.push('Verified with user-provided 12-digit bank UTR / RRN');
+    } else {
+      reasons.push('Verified with 12-digit bank UTR / RRN');
+    }
     if (expense.responseCode === '00' || expense.responseCode === '0') {
       reasons.push('UPI network reported successful settlement (code 00)');
     }
-    if (expense.reconciliationStatus === 'MATCHED') {
+    if (expense.reconciliationStatus === 'MATCHED' || expense.reconciliationStatus === 'RECONCILED') {
       reasons.push('Intended amount matched external response exactly');
     }
     return { level: 'HIGH', reasons };
@@ -61,7 +65,7 @@ export function calculateExpenseConfidence(expense: Partial<Expense>): {
 
   if (hasApprovalRef && (hasTxnId || hasTxnRef)) {
     reasons.push('Confirmed with bank approval reference and transaction ID');
-    if (expense.reconciliationStatus === 'MATCHED') {
+    if (expense.reconciliationStatus === 'MATCHED' || expense.reconciliationStatus === 'RECONCILED') {
       reasons.push('Intended amount matched external response');
     }
     return { level: 'HIGH', reasons };
@@ -70,6 +74,12 @@ export function calculateExpenseConfidence(expense: Partial<Expense>): {
   if (hasTxnId || hasTxnRef) {
     reasons.push('Recorded with UPI transaction reference');
     reasons.push('Bank 12-digit UTR not yet attached');
+    return { level: 'MEDIUM', reasons };
+  }
+
+  if (expense.reconciliationStatus === 'CONFIRMED_UNRECONCILED' || expense.paymentConfirmationSource === 'USER_CONFIRMED') {
+    reasons.push('User confirmed payment completed in external UPI app');
+    reasons.push('Bank 12-digit UTR not attached (optional)');
     return { level: 'MEDIUM', reasons };
   }
 

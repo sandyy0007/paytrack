@@ -7,7 +7,7 @@ import {
   applyTransition, calculateExpenseConfidence, classifyReference, DEFAULT_CATEGORIES, matchesQuery, needsAttention, statusBucket,
   type Budget, type BudgetPeriod, type Category, type Expense, type ExpenseEvent, type ExpenseMode,
   type ExpenseStatus, type FinancialTransactionType, type Goal, type Loan, type PaymentMethod, type QrSource,
-  type ReconciliationStatus, type SplitData, type Subscription,
+  type ReconciliationStatus, type SplitData, type Subscription, type PaymentConfirmationSource,
 } from '@paytrack/shared';
 import { bumpData } from './dataVersion';
 import { getDb, inTx, kvGet, kvSet, type Tx } from './db';
@@ -45,6 +45,8 @@ export function rowToExpense(r: Row): LocalExpense {
     splitData: r.split_data ? (typeof r.split_data === 'string' ? JSON.parse(r.split_data) : r.split_data) : null,
     recoveryDismissed: r.recovery_dismissed === 1 || r.recovery_dismissed === true,
     financialType: (r.financial_type as FinancialTransactionType) ?? 'EXPENSE',
+    paymentConfirmationSource: (r.payment_confirmation_source as PaymentConfirmationSource) ?? null,
+    tags: r.tags ? (typeof r.tags === 'string' ? JSON.parse(r.tags) : r.tags) : null,
   };
 }
 
@@ -243,11 +245,16 @@ export async function saveSuccessfulPayment(
   }
 
   // Reconciliation status & confidence
-  const recStatus: ReconciliationStatus = utr
-    ? 'MATCHED'
-    : (transactionId || transactionReference || approvalReference)
-    ? 'RESPONSE_RECEIVED'
-    : 'UNCONFIRMED';
+  let recStatus: ReconciliationStatus = 'CONFIRMED_UNRECONCILED';
+  let confSource: PaymentConfirmationSource = 'USER_CONFIRMED';
+
+  if (utr) {
+    recStatus = 'RECONCILED';
+    confSource = 'AUTO_UPI';
+  } else if (transactionId || transactionReference || approvalReference) {
+    recStatus = 'RESPONSE_RECEIVED';
+    confSource = 'AUTO_UPI';
+  }
 
   const conf = calculateExpenseConfidence({
     status: 'PAID',
@@ -258,6 +265,7 @@ export async function saveSuccessfulPayment(
     responseCode,
     reconciliationStatus: recStatus,
     paymentMethod: current.paymentMethod,
+    paymentConfirmationSource: confSource,
   });
 
   // 1. Step to SUCCESS_RESPONSE if not already there
@@ -312,11 +320,12 @@ export async function saveSuccessfulPayment(
          payment_initiated_at = COALESCE(payment_initiated_at, ?), payment_completed_at = ?,
          updated_at = ?, transaction_id = ?, approval_reference = ?, response_code = ?,
          reconciliation_status = ?, confidence_level = ?, confidence_reasons = ?,
+         payment_confirmation_source = ?,
          sync_state = 'pending' WHERE id = ?`,
       final.status, utr, transactionReference, final.paymentApp ?? paymentApp ?? null,
       at, final.paymentCompletedAt ?? at, at,
       transactionId, approvalReference, responseCode,
-      recStatus, conf.level, JSON.stringify(conf.reasons), id,
+      recStatus, conf.level, JSON.stringify(conf.reasons), confSource, id,
     );
     if (step1Event) await insertEvent(tx, step1Event);
     await insertEvent(tx, s2.event);
@@ -614,15 +623,16 @@ export async function listBudgets(): Promise<Budget[]> {
 export async function upsertBudget(b: { id?: string; category: string; amountPaise: number; period: BudgetPeriod; thresholds: number[] }): Promise<void> {
   const db = await getDb();
   const at = new Date().toISOString();
+  const id = b.id ?? uuid();
   await inTx(db, async (tx) => {
     const clash = await tx.getFirstAsync<Row>(
-      'SELECT id FROM budgets WHERE deleted_at IS NULL AND category = ? AND period = ?', b.category, b.period,
+      'SELECT id FROM budgets WHERE deleted_at IS NULL AND category = ? AND period = ? AND id <> ?', b.category, b.period, id,
     );
-    const id = b.id ?? clash?.id ?? uuid();
+    if (clash) throw new Error('A budget for this category and period already exists.');
     await tx.runAsync(
       `INSERT INTO budgets (id, category, amount_paise, period, thresholds, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET category = excluded.category, amount_paise = excluded.amount_paise, period = excluded.period,
-         thresholds = excluded.thresholds, updated_at = excluded.updated_at, deleted_at = NULL`,
+         thresholds = excluded.thresholds, updated_at = excluded.updated_at`,
       id, b.category, b.amountPaise, b.period, JSON.stringify(b.thresholds), at, at,
     );
     await enqueue(tx, 'budget.upsert', id, { id, category: b.category, amountPaise: b.amountPaise, period: b.period, thresholds: b.thresholds });
@@ -1005,5 +1015,189 @@ export async function getMoneyPosition(): Promise<{
 
 export async function setMoneyPosition(bankBalancePaise: number): Promise<void> {
   await kvSet('user_bank_balance_paise', String(bankBalancePaise));
+  bumpData();
+}
+
+/** Case B: User-entered 12-digit UTR links to expense as RECONCILED_MANUAL. */
+export async function addManualUtr(id: string, utrInput: string): Promise<LocalExpense> {
+  const cleanUtr = utrInput.trim();
+  if (!/^[0-9]{12}$/.test(cleanUtr)) {
+    throw new Error('UTR must be exactly 12 numeric digits.');
+  }
+  const db = await getDb();
+  const dup = await db.getFirstAsync<{ id: string }>(
+    `SELECT id FROM expenses WHERE deleted_at IS NULL AND id <> ? AND utr = ?`, id, cleanUtr,
+  );
+  if (dup) throw new LocalDuplicateReferenceError();
+
+  const current = await getExpense(id);
+  if (!current) throw new Error('Expense not found');
+  const at = new Date().toISOString();
+  const e1 = uuid();
+  const recStatus: ReconciliationStatus = 'RECONCILED_MANUAL';
+  const conf = calculateExpenseConfidence({
+    ...current,
+    status: 'PAID',
+    utr: cleanUtr,
+    reconciliationStatus: recStatus,
+    paymentConfirmationSource: 'MANUAL_UTR',
+  });
+
+  await inTx(db, async (tx) => {
+    await tx.runAsync(
+      `UPDATE expenses SET utr = ?, reconciliation_status = ?, confidence_level = ?, confidence_reasons = ?, payment_confirmation_source = 'MANUAL_UTR', updated_at = ?, sync_state = 'pending' WHERE id = ?`,
+      cleanUtr, recStatus, conf.level, JSON.stringify(conf.reasons), at, id,
+    );
+    await insertEvent(tx, {
+      id: e1,
+      expenseId: id,
+      fromStatus: current.status,
+      toStatus: current.status,
+      at,
+      meta: { action: 'MANUAL_UTR_ADDED', utr: cleanUtr },
+    });
+    await enqueue(tx, 'expense.reference', id, { id, reference: cleanUtr, eventId: e1, at, manual: true });
+  });
+
+  bumpData();
+  const updated = await getExpense(id);
+  return updated!;
+}
+
+export async function updateExpenseNotesAndTags(id: string, notes: string | null, tags: string[] | null): Promise<void> {
+  const db = await getDb();
+  const at = new Date().toISOString();
+  await inTx(db, async (tx) => {
+    await tx.runAsync(
+      `UPDATE expenses SET notes = ?, tags = ?, updated_at = ?, sync_state = 'pending' WHERE id = ?`,
+      notes, tags ? JSON.stringify(tags) : null, at, id,
+    );
+    await enqueue(tx, 'expense.update', id, { id, patch: { notes, tags, updatedAt: at } });
+  });
+  bumpData();
+}
+
+/* ----------------------- Feature D: Smart Cash Envelopes ------------------- */
+
+export interface Envelope {
+  id: string;
+  name: string;
+  allocatedPaise: number;
+  spentPaise: number;
+  color: string;
+  icon: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function listEnvelopes(): Promise<Envelope[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<Row>('SELECT * FROM envelopes ORDER BY created_at ASC');
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    allocatedPaise: r.allocated_paise,
+    spentPaise: r.spent_paise,
+    color: r.color,
+    icon: r.icon,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  }));
+}
+
+export async function upsertEnvelope(env: {
+  id?: string;
+  name: string;
+  allocatedPaise: number;
+  spentPaise?: number;
+  color?: string;
+  icon?: string;
+}): Promise<Envelope> {
+  const db = await getDb();
+  const at = new Date().toISOString();
+  const id = env.id ?? uuid();
+  const color = env.color ?? '#10E39A';
+  const icon = env.icon ?? 'folder-outline';
+  const spent = env.spentPaise ?? 0;
+  await inTx(db, async (tx) => {
+    await tx.runAsync(
+      `INSERT INTO envelopes (id, name, allocated_paise, spent_paise, color, icon, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET name = excluded.name, allocated_paise = excluded.allocated_paise, spent_paise = excluded.spent_paise, color = excluded.color, icon = excluded.icon, updated_at = excluded.updated_at`,
+      id, env.name.trim(), env.allocatedPaise, spent, color, icon, at, at,
+    );
+  });
+  bumpData();
+  return { id, name: env.name.trim(), allocatedPaise: env.allocatedPaise, spentPaise: spent, color, icon, createdAt: at, updatedAt: at };
+}
+
+export async function transferEnvelopeFunds(fromId: string, toId: string, amountPaise: number): Promise<void> {
+  const db = await getDb();
+  const at = new Date().toISOString();
+  await inTx(db, async (tx) => {
+    await tx.runAsync('UPDATE envelopes SET allocated_paise = MAX(0, allocated_paise - ?), updated_at = ? WHERE id = ?', amountPaise, at, fromId);
+    await tx.runAsync('UPDATE envelopes SET allocated_paise = allocated_paise + ?, updated_at = ? WHERE id = ?', amountPaise, at, toId);
+  });
+  bumpData();
+}
+
+export async function deleteEnvelope(id: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync('DELETE FROM envelopes WHERE id = ?', id);
+  bumpData();
+}
+
+/* ----------------------- Feature E: Receipt Vault -------------------------- */
+
+export interface ReceiptItem {
+  id: string;
+  expenseId: string;
+  fileUri: string;
+  fileName: string;
+  mimeType: string;
+  fileSize: number;
+  notes: string | null;
+  createdAt: string;
+}
+
+export async function listReceipts(expenseId: string): Promise<ReceiptItem[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<Row>('SELECT * FROM receipts WHERE expense_id = ? ORDER BY created_at DESC', expenseId);
+  return rows.map((r) => ({
+    id: r.id,
+    expenseId: r.expense_id,
+    fileUri: r.file_uri,
+    fileName: r.file_name,
+    mimeType: r.mime_type,
+    fileSize: r.file_size,
+    notes: r.notes,
+    createdAt: r.created_at,
+  }));
+}
+
+export async function addReceipt(item: {
+  expenseId: string;
+  fileUri: string;
+  fileName: string;
+  mimeType: string;
+  fileSize?: number;
+  notes?: string;
+}): Promise<ReceiptItem> {
+  const db = await getDb();
+  const id = uuid();
+  const at = new Date().toISOString();
+  await inTx(db, async (tx) => {
+    await tx.runAsync(
+      `INSERT INTO receipts (id, expense_id, file_uri, file_name, mime_type, file_size, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      id, item.expenseId, item.fileUri, item.fileName, item.mimeType, item.fileSize ?? 0, item.notes ?? null, at,
+    );
+  });
+  bumpData();
+  return { id, expenseId: item.expenseId, fileUri: item.fileUri, fileName: item.fileName, mimeType: item.mimeType, fileSize: item.fileSize ?? 0, notes: item.notes ?? null, createdAt: at };
+}
+
+export async function deleteReceipt(id: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync('DELETE FROM receipts WHERE id = ?', id);
   bumpData();
 }

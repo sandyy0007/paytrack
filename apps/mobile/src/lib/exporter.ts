@@ -18,6 +18,25 @@ export async function exportCsv(rows: LocalExpense[]): Promise<void> {
   await Sharing.shareAsync(file.uri, { mimeType: 'text/csv', dialogTitle: 'Export expenses (CSV)', UTI: 'public.comma-separated-values-text' });
 }
 
+export async function exportJsonBackup(rows: LocalExpense[]): Promise<void> {
+  const file = new File(Paths.cache, `paytrack-backup-${stamp()}.json`);
+  if (file.exists) file.delete();
+  file.create();
+  const payload = {
+    format: 'PAYTRACK_BACKUP_V1',
+    version: '1.0.4',
+    exportedAt: new Date().toISOString(),
+    count: rows.length,
+    expenses: rows,
+  };
+  file.write(JSON.stringify(payload, null, 2));
+  await Sharing.shareAsync(file.uri, {
+    mimeType: 'application/json',
+    dialogTitle: 'Export PayTrack Backup (JSON)',
+    UTI: 'public.json',
+  });
+}
+
 const esc = (s: string | null | undefined) =>
   (s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 

@@ -29,7 +29,7 @@ export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
 export const TRANSITIONS: Readonly<Record<ExpenseStatus, readonly ExpenseStatus[]>> = {
   DRAFT: ['PENDING_PAYMENT', 'CANCELLED', 'PAID'],
   PENDING_PAYMENT: ['PAYMENT_APP_OPENED', 'CANCELLED'],
-  PAYMENT_APP_OPENED: ['USER_RETURNED', 'SUCCESS_RESPONSE', 'FAILED_RESPONSE', 'PAID', 'FAILED', 'CANCELLED', 'UNCONFIRMED'],
+  PAYMENT_APP_OPENED: ['USER_RETURNED', 'SUCCESS_RESPONSE', 'FAILED_RESPONSE', 'FAILED', 'CANCELLED', 'UNCONFIRMED'],
   USER_RETURNED: ['PAYMENT_CONFIRMED_BY_USER', 'SUCCESS_RESPONSE', 'FAILED_RESPONSE', 'PAID', 'FAILED', 'CANCELLED', 'UNCONFIRMED'],
   SUCCESS_RESPONSE: ['PAID', 'FAILED'],
   FAILED_RESPONSE: ['FAILED', 'PENDING_PAYMENT', 'CANCELLED'],
@@ -101,7 +101,7 @@ export function checkTransition(
         if (isUpi) return 'MANUAL_ONLY';
         return ctx.amountPaise > 0 ? null : 'AMOUNT_REQUIRED';
       }
-      return hasRef ? null : 'REFERENCE_REQUIRED';
+      return null;
     default:
       return null;
   }
