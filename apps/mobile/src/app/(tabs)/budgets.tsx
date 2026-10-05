@@ -1,10 +1,11 @@
-import { budgetUsage, formatINR, parseRupeesToPaise, paiseToDecimalString, spentInPeriod, type Budget, type BudgetPeriod } from '@paytrack/shared';
-import { useEffect, useState } from 'react';
+import { budgetUsage, formatINR, parseRupeesToPaise, paiseToDecimalString, spentInPeriod, type Budget } from '@paytrack/shared';
+import { router } from 'expo-router';
+import { useState } from 'react';
 import { Keyboard, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { BudgetProgress, usageColor } from '@/components/BudgetProgress';
 import { IconButton, PrimaryButton, SecondaryButton } from '@/components/Buttons';
-import { CategoryChip, FilterChip } from '@/components/CategoryChip';
+import { FilterChip } from '@/components/CategoryChip';
 import { GlassCard } from '@/components/GlassCard';
 import { categoryIcon, Icon } from '@/components/Icon';
 import { BottomSheet, ConfirmDialog } from '@/components/Overlays';
@@ -17,165 +18,14 @@ import { categoryMeta } from '@/components/TransactionCard';
 import { useLiveQuery } from '@/lib/dataVersion';
 import { tzOffsetMinutes } from '@/lib/format';
 import { haptic } from '@/lib/haptics';
-import { ensurePermission } from '@/lib/notifications';
 import {
-  deleteBudget, deleteEnvelope, expensesSince, listBudgets, listCategories,
-  listEnvelopes, transferEnvelopeFunds, upsertBudget, upsertEnvelope, type Envelope,
+  deleteBudget, deleteEnvelope, expensesSince, listBudgets,
+  listEnvelopes, transferEnvelopeFunds, upsertEnvelope, type Envelope,
 } from '@/lib/repo';
 import { scheduleSync } from '@/lib/sync';
 import { colors, radius, space, type } from '@/theme/tokens';
 
 const ALL = '__ALL__';
-
-function getBudgetPeriodDates(p: BudgetPeriod) {
-  const now = new Date();
-  if (p === 'MONTHLY') {
-    const start = new Date(now.getFullYear(), now.getMonth(), 1);
-    const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-    const opts: Intl.DateTimeFormatOptions = { day: 'numeric', month: 'short', year: 'numeric' };
-    return {
-      startStr: start.toLocaleDateString('en-IN', opts),
-      endStr: end.toLocaleDateString('en-IN', opts),
-      cycleDesc: 'Resets on the 1st of each calendar month',
-    };
-  } else {
-    const dow = (now.getDay() + 6) % 7; // Monday = 0
-    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - dow);
-    const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 6);
-    const opts: Intl.DateTimeFormatOptions = { day: 'numeric', month: 'short', year: 'numeric' };
-    return {
-      startStr: start.toLocaleDateString('en-IN', opts),
-      endStr: end.toLocaleDateString('en-IN', opts),
-      cycleDesc: 'Resets every Monday at midnight',
-    };
-  }
-}
-
-function BudgetEditor({ budget, visible, onClose }: { budget: Budget | null; visible: boolean; onClose: () => void }) {
-  const cats = useLiveQuery(() => listCategories());
-  const [category, setCategory] = useState(budget?.category ?? 'Food');
-  const [amount, setAmount] = useState(budget ? paiseToDecimalString(budget.amountPaise).replace(/\.00$/, '') : '');
-  const [period, setPeriod] = useState<BudgetPeriod>(budget?.period ?? 'MONTHLY');
-  const [thresholds, setThresholds] = useState((budget?.thresholds ?? [75, 90, 100]).join(', '));
-  const [err, setErr] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    if (visible) {
-      setCategory(budget?.category ?? 'Food');
-      setAmount(budget ? paiseToDecimalString(budget.amountPaise).replace(/\.00$/, '') : '');
-      setPeriod(budget?.period ?? 'MONTHLY');
-      setThresholds((budget?.thresholds ?? [75, 90, 100]).join(', '));
-      setErr(null);
-      setBusy(false);
-    }
-  }, [budget, visible]);
-
-  const save = async () => {
-    Keyboard.dismiss();
-    const a = parseRupeesToPaise(amount);
-    if (!a.ok || a.paise <= 0) return setErr('Enter a valid budget amount (> ₹0).');
-    const t = thresholds.split(/[,\s]+/).filter(Boolean).map(Number);
-    if (!t.length || t.some((x) => !Number.isInteger(x) || x < 1 || x > 200) || t.length > 5) return setErr('Warnings must be 1–5 whole percentages, e.g. 75, 90, 100.');
-    setBusy(true);
-    try {
-      await upsertBudget({ id: budget?.id, category, amountPaise: a.paise, period, thresholds: [...new Set(t)].sort((x, y) => x - y) });
-      void ensurePermission();
-      scheduleSync();
-      onClose();
-    } catch (e) {
-      setErr((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const periodInfo = getBudgetPeriodDates(period);
-
-  return (
-    <BottomSheet
-      visible={visible}
-      onClose={onClose}
-      title={budget ? 'Edit budget' : 'New budget'}
-      fullHeight
-      footer={
-        <View style={{ gap: space.xs }}>
-          {err ? <InlineNotice tone="error" text={err} /> : null}
-          <PrimaryButton
-            label={budget ? 'Save budget' : 'Create Budget'}
-            icon="wallet-outline"
-            onPress={save}
-            loading={busy}
-            size="lg"
-          />
-        </View>
-      }
-    >
-      <ScrollView
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={true}
-        nestedScrollEnabled={true}
-        style={{ flex: 1 }}
-        contentContainerStyle={{ gap: space.md, paddingBottom: 40, flexGrow: 1 }}
-      >
-        <View style={{ gap: 6 }}>
-          <Text style={type.label}>Category</Text>
-          <View style={styles.chips}>
-            <CategoryChip compact name="Overall" icon="other" color={colors.primary} selected={category === ALL} onPress={() => setCategory(ALL)} />
-            {(cats.data ?? []).map((c) => (
-              <CategoryChip key={c.id} compact name={c.name} icon={c.icon} color={c.color} selected={category === c.name} onPress={() => setCategory(c.name)} />
-            ))}
-          </View>
-        </View>
-
-        <TextField
-          label="Amount (₹)"
-          value={amount}
-          onChangeText={(v) => { setAmount(v); setErr(null); }}
-          keyboardType="decimal-pad"
-          placeholder="8000"
-        />
-
-        <View style={{ gap: 6 }}>
-          <Text style={type.label}>Period</Text>
-          <View style={{ flexDirection: 'row', gap: space.sm }}>
-            <FilterChip label="Monthly" selected={period === 'MONTHLY'} onPress={() => setPeriod('MONTHLY')} />
-            <FilterChip label="Weekly" selected={period === 'WEEKLY'} onPress={() => setPeriod('WEEKLY')} />
-          </View>
-        </View>
-
-        <TextField
-          label="Warn me at (%)"
-          value={thresholds}
-          onChangeText={setThresholds}
-          keyboardType="numbers-and-punctuation"
-          hint="Default 75, 90, 100"
-        />
-
-        <View style={styles.periodCard}>
-          <Text style={[type.caption, { color: colors.textSecondary }]}>Calculated Period Coverage</Text>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: space.xs }}>
-            <View>
-              <Text style={type.caption}>Start Date</Text>
-              <Text style={[type.bodyStrong, { fontSize: 13 }]}>{periodInfo.startStr}</Text>
-            </View>
-            <Icon name="arrow-forward" size={14} color={colors.textMuted} />
-            <View style={{ alignItems: 'flex-end' }}>
-              <Text style={type.caption}>End Date</Text>
-              <Text style={[type.bodyStrong, { fontSize: 13 }]}>{periodInfo.endStr}</Text>
-            </View>
-          </View>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: space.xs, paddingTop: space.xs, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border }}>
-            <Icon name="sync-outline" size={12} color={colors.primary} />
-            <Text style={[type.caption, { color: colors.primary, fontSize: 12 }]}>{periodInfo.cycleDesc}</Text>
-          </View>
-        </View>
-
-        {err ? <InlineNotice tone="error" text={err} /> : null}
-      </ScrollView>
-    </BottomSheet>
-  );
-}
 
 function EnvelopeEditor({ envelope, visible, onClose }: { envelope: Envelope | null; visible: boolean; onClose: () => void }) {
   const [name, setName] = useState(envelope?.name ?? '');
@@ -314,7 +164,6 @@ function EnvelopeTransferDialog({
 
 export default function Budgets() {
   const [tab, setTab] = useState<'BUDGETS' | 'ENVELOPES'>('BUDGETS');
-  const [editingBudget, setEditingBudget] = useState<{ budget: Budget | null } | null>(null);
   const [toDeleteBudget, setToDeleteBudget] = useState<Budget | null>(null);
 
   // Envelopes state
@@ -349,7 +198,7 @@ export default function Budgets() {
         <IconButton
           icon="add"
           label={tab === 'BUDGETS' ? 'Add budget' : 'Add envelope'}
-          onPress={() => (tab === 'BUDGETS' ? setEditingBudget({ budget: null }) : setEditingEnvelope({ envelope: null }))}
+          onPress={() => (tab === 'BUDGETS' ? router.push('/budget/create') : setEditingEnvelope({ envelope: null }))}
           color={colors.primary}
         />
       </View>
@@ -385,7 +234,7 @@ export default function Budgets() {
                 title="No budgets yet"
                 message="Set limits like Food ₹8,000/month and get a heads-up at 75%, 90% and 100%."
                 cta="Create budget"
-                onCta={() => setEditingBudget({ budget: null })}
+                onCta={() => router.push('/budget/create')}
               />
             </GlassCard>
           ) : (
@@ -394,7 +243,7 @@ export default function Budgets() {
               const u = budgetUsage(spent, b.amountPaise, b.thresholds);
               return (
                 <Animated.View key={b.id} entering={FadeInDown.delay(i * 60).duration(350)}>
-                  <GlassCard padding={space.xl} onPress={() => setEditingBudget({ budget: b })} accessibilityLabel={`${meta.name} budget. Tap to edit`}>
+                  <GlassCard padding={space.xl} onPress={() => router.push({ pathname: '/budget/create', params: { id: b.id } })} accessibilityLabel={`${meta.name} budget. Tap to edit`}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.md, marginBottom: space.lg }}>
                       <View style={[styles.icon, { backgroundColor: `${meta.color}22` }]}>
                         <Icon name={categoryIcon(meta.icon)} size={20} color={meta.color} />
@@ -423,7 +272,7 @@ export default function Budgets() {
             icon="add"
             variant="ghost"
             size="md"
-            onPress={() => setEditingBudget({ budget: null })}
+            onPress={() => router.push('/budget/create')}
             style={{ borderRadius: radius.lg }}
           />
         </>
@@ -488,15 +337,6 @@ export default function Budgets() {
       )}
 
       {/* Modals & Dialogs */}
-      {editingBudget ? (
-        <BudgetEditor
-          key={editingBudget.budget?.id ?? 'new'}
-          budget={editingBudget.budget}
-          visible
-          onClose={() => setEditingBudget(null)}
-        />
-      ) : null}
-
       {editingEnvelope ? (
         <EnvelopeEditor
           key={editingEnvelope.envelope?.id ?? 'new-env'}
@@ -544,15 +384,6 @@ export default function Budgets() {
 }
 
 const styles = StyleSheet.create({
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  periodCard: {
-    padding: space.md,
-    borderRadius: radius.md,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    gap: 4,
-  },
   icon: { width: 44, height: 44, borderRadius: radius.md, alignItems: 'center', justifyContent: 'center' },
   segmentWrap: {
     flexDirection: 'row',

@@ -626,6 +626,12 @@ export async function listBudgets(): Promise<Budget[]> {
   return (await db.getAllAsync<Row>('SELECT * FROM budgets WHERE deleted_at IS NULL ORDER BY created_at')).map(rowToBudget);
 }
 
+export async function getBudget(id: string): Promise<Budget | null> {
+  const db = await getDb();
+  const row = await db.getFirstAsync<Row>('SELECT * FROM budgets WHERE id = ? AND deleted_at IS NULL', id);
+  return row ? rowToBudget(row) : null;
+}
+
 export async function upsertBudget(b: { id?: string; category: string; amountPaise: number; period: BudgetPeriod; thresholds: number[] }): Promise<void> {
   const db = await getDb();
   const at = new Date().toISOString();
