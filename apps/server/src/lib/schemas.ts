@@ -28,7 +28,7 @@ export const expenseCreate = z
     currency: z.literal('INR').default('INR'),
     payeeName: z.string().trim().max(100).nullable().optional(),
     upiId: z.string().trim().regex(VPA_RE, 'Invalid UPI ID').nullable().optional(),
-    reason: text(REASON_MAX),
+    reason: z.string().trim().max(REASON_MAX).default(''),
     category: categoryName,
     paymentMethod: z.enum(PAYMENT_METHODS).default('UPI'),
     qrSource: z.enum(['UPI_URI', 'BHARAT_QR', 'MANUAL_UPI', 'NONE']).default('NONE'),
@@ -44,7 +44,7 @@ export const expenseCreate = z
 /** Only descriptive fields are editable; money/payee are frozen once the payment is prepared. */
 export const expensePatch = z
   .object({
-    reason: text(REASON_MAX).optional(),
+    reason: z.string().trim().max(REASON_MAX).optional(),
     category: categoryName.optional(),
     notes: z.string().trim().max(NOTES_MAX).nullable().optional(),
     expenseDate: isoTime.optional(),

@@ -44,7 +44,6 @@ export default function Purpose() {
 
   const submit = async () => {
     const r = reason.trim();
-    if (!r) { setError('Add a short reason, e.g. "dinner" or "rent".'); input.current?.focus(); return; }
     if (!category || !CATEGORY_NAME_RE.test(category)) { setError('Choose a category.'); return; }
     setBusy(true);
     setError(null);
@@ -78,8 +77,9 @@ export default function Purpose() {
         </View>
       </GlassCard>
 
-      <View style={{ gap: space.sm }}>
+      <View style={{ gap: space.xs }}>
         <Text style={type.h2} accessibilityRole="header">What is this payment for?</Text>
+        <Text style={[type.caption, { color: colors.textSecondary }]}>Optional — add a reason if you want</Text>
         <TextInput
           ref={input}
           value={reason}
@@ -87,11 +87,11 @@ export default function Purpose() {
           placeholder="e.g. dinner, rent, project components…"
           placeholderTextColor={colors.textMuted}
           selectionColor={colors.primary}
-          autoFocus
+          autoFocus={false}
           maxLength={REASON_MAX}
           returnKeyType="done"
-          accessibilityLabel="Payment reason"
-          style={styles.reason}
+          accessibilityLabel="Payment reason (optional)"
+          style={[styles.reason, { marginTop: space.xs }]}
         />
       </View>
 
@@ -112,7 +112,13 @@ export default function Purpose() {
       <View style={styles.toggleRow}>
         <View style={{ flex: 1 }}>
           <Text style={type.bodyStrong}>Add reason as UPI note</Text>
-          <Text style={type.caption}>{payload.note ? 'This QR already has its own note.' : 'Visible to the payee in their UPI app.'}</Text>
+          <Text style={type.caption}>
+            {payload.note
+              ? 'This QR already has its own note.'
+              : !reason.trim()
+              ? 'Adds note if a reason is entered.'
+              : 'Visible to the payee in their UPI app.'}
+          </Text>
         </View>
         <Switch
           value={shareNoteWithPayee && !payload.note}

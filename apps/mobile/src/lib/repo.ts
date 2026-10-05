@@ -81,7 +81,7 @@ export interface NewExpenseInput {
   amountPaise: number;
   payeeName: string | null;
   upiId: string | null;
-  reason: string;
+  reason?: string | null;
   category: string;
   paymentMethod: PaymentMethod;
   qrSource: QrSource;
@@ -113,7 +113,7 @@ export async function createExpense(input: NewExpenseInput): Promise<LocalExpens
 
   const base: LocalExpense = {
     id, expenseCode: code, userId: null, amountPaise: input.amountPaise, currency: 'INR',
-    payeeName: input.payeeName, upiId: input.upiId, reason: input.reason.trim(), category: input.category,
+    payeeName: input.payeeName, upiId: input.upiId, reason: (input.reason ?? '').trim(), category: input.category,
     status: 'DRAFT', paymentMethod: input.paymentMethod, utr: null, transactionReference: null, paymentApp: null,
     qrSource: input.qrSource, qrPayload: qrPayloadStr, notes: input.notes ?? null,
     createdAt: at, expenseDate: input.expenseDate ?? at, paymentInitiatedAt: null, paymentCompletedAt: null,
@@ -497,7 +497,7 @@ export async function updateExpense(id: string, patch: ExpensePatch): Promise<vo
     if (!cur) throw new Error('Expense not found');
     await tx.runAsync(
       `UPDATE expenses SET reason = ?, category = ?, notes = ?, expense_date = ?, mode = ?, split_data = ?, financial_type = ?, updated_at = ?, sync_state = 'pending' WHERE id = ?`,
-      patch.reason?.trim() ?? cur.reason,
+      patch.reason !== undefined ? patch.reason.trim() : cur.reason,
       patch.category ?? cur.category,
       patch.notes !== undefined ? patch.notes : cur.notes,
       patch.expenseDate ?? cur.expense_date,

@@ -86,7 +86,7 @@ export default function Failure() {
         <Text style={[type.h1, { textAlign: 'center' }]} accessibilityRole="header">Payment Not Completed</Text>
         <AmountDisplay paise={e.amountPaise} size="md" color={colors.textSecondary} />
         <Text style={[type.body, { color: colors.textSecondary, textAlign: 'center' }]}>
-          To {e.payeeName ?? e.upiId} · {e.reason}. This will not be counted as spending.
+          To {e.payeeName ?? e.upiId}{e.reason ? ` · ${e.reason}` : ''}. This will not be counted as spending.
         </Text>
       </View>
 

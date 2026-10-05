@@ -70,7 +70,7 @@ export function PaymentSlip({ data }: { data: SlipData }) {
       <Perforation />
       <View style={styles.body}>
         <Row label="To" value={[data.payeeName, data.upiId].filter(Boolean).join('\n')} />
-        <Row label="For" value={`${data.reason}  ·  ${data.category}`} />
+        <Row label="For" value={data.reason ? `${data.reason}  ·  ${data.category}` : data.category} />
         <View style={styles.grid}>
           <View style={{ flex: 1 }}><Row label="Date" value={fmtDateLong(data.createdAt)} /></View>
           <View style={{ flex: 0.7 }}><Row label="Time" value={fmtTime(data.createdAt)} /></View>

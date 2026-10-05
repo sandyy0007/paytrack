@@ -163,7 +163,7 @@ export default function Return() {
         </View>
 
         <View style={{ marginTop: space.sm, gap: space.xxs }}>
-          <Text style={[type.bodyStrong, { color: colors.text }]}>{e.reason}</Text>
+          {e.reason ? <Text style={[type.bodyStrong, { color: colors.text }]}>{e.reason}</Text> : null}
           <Text style={[type.caption, { color: colors.textSecondary }]}>Category: {e.category}</Text>
         </View>
 

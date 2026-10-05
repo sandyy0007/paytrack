@@ -1,5 +1,5 @@
 import { budgetUsage, formatINR, parseRupeesToPaise, paiseToDecimalString, spentInPeriod, type Budget, type BudgetPeriod } from '@paytrack/shared';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Keyboard, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { BudgetProgress, usageColor } from '@/components/BudgetProgress';
@@ -27,6 +27,30 @@ import { colors, radius, space, type } from '@/theme/tokens';
 
 const ALL = '__ALL__';
 
+function getBudgetPeriodDates(p: BudgetPeriod) {
+  const now = new Date();
+  if (p === 'MONTHLY') {
+    const start = new Date(now.getFullYear(), now.getMonth(), 1);
+    const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    const opts: Intl.DateTimeFormatOptions = { day: 'numeric', month: 'short', year: 'numeric' };
+    return {
+      startStr: start.toLocaleDateString('en-IN', opts),
+      endStr: end.toLocaleDateString('en-IN', opts),
+      cycleDesc: 'Resets on the 1st of each calendar month',
+    };
+  } else {
+    const dow = (now.getDay() + 6) % 7; // Monday = 0
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - dow);
+    const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 6);
+    const opts: Intl.DateTimeFormatOptions = { day: 'numeric', month: 'short', year: 'numeric' };
+    return {
+      startStr: start.toLocaleDateString('en-IN', opts),
+      endStr: end.toLocaleDateString('en-IN', opts),
+      cycleDesc: 'Resets every Monday at midnight',
+    };
+  }
+}
+
 function BudgetEditor({ budget, visible, onClose }: { budget: Budget | null; visible: boolean; onClose: () => void }) {
   const cats = useLiveQuery(() => listCategories());
   const [category, setCategory] = useState(budget?.category ?? 'Food');
@@ -35,6 +59,17 @@ function BudgetEditor({ budget, visible, onClose }: { budget: Budget | null; vis
   const [thresholds, setThresholds] = useState((budget?.thresholds ?? [75, 90, 100]).join(', '));
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (visible) {
+      setCategory(budget?.category ?? 'Food');
+      setAmount(budget ? paiseToDecimalString(budget.amountPaise).replace(/\.00$/, '') : '');
+      setPeriod(budget?.period ?? 'MONTHLY');
+      setThresholds((budget?.thresholds ?? [75, 90, 100]).join(', '));
+      setErr(null);
+      setBusy(false);
+    }
+  }, [budget, visible]);
 
   const save = async () => {
     Keyboard.dismiss();
@@ -55,13 +90,16 @@ function BudgetEditor({ budget, visible, onClose }: { budget: Budget | null; vis
     }
   };
 
+  const periodInfo = getBudgetPeriodDates(period);
+
   return (
     <BottomSheet
       visible={visible}
       onClose={onClose}
       title={budget ? 'Edit budget' : 'New budget'}
+      fullHeight
       footer={
-        <>
+        <View style={{ gap: space.xs }}>
           {err ? <InlineNotice tone="error" text={err} /> : null}
           <PrimaryButton
             label={budget ? 'Save budget' : 'Create Budget'}
@@ -70,28 +108,70 @@ function BudgetEditor({ budget, visible, onClose }: { budget: Budget | null; vis
             loading={busy}
             size="lg"
           />
-        </>
+        </View>
       }
     >
       <ScrollView
         keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
-        style={{ flexShrink: 1 }}
-        contentContainerStyle={{ gap: space.lg, paddingBottom: space.lg }}
+        showsVerticalScrollIndicator={true}
+        nestedScrollEnabled={true}
+        style={{ flex: 1 }}
+        contentContainerStyle={{ gap: space.md, paddingBottom: 40, flexGrow: 1 }}
       >
-        <View style={{ gap: space.sm }}>
+        <View style={{ gap: 6 }}>
           <Text style={type.label}>Category</Text>
           <View style={styles.chips}>
-            <CategoryChip name="Overall" icon="other" color={colors.primary} selected={category === ALL} onPress={() => setCategory(ALL)} />
-            {(cats.data ?? []).map((c) => <CategoryChip key={c.id} name={c.name} icon={c.icon} color={c.color} selected={category === c.name} onPress={() => setCategory(c.name)} />)}
+            <CategoryChip compact name="Overall" icon="other" color={colors.primary} selected={category === ALL} onPress={() => setCategory(ALL)} />
+            {(cats.data ?? []).map((c) => (
+              <CategoryChip key={c.id} compact name={c.name} icon={c.icon} color={c.color} selected={category === c.name} onPress={() => setCategory(c.name)} />
+            ))}
           </View>
         </View>
-        <TextField label="Amount (₹)" value={amount} onChangeText={(v) => { setAmount(v); setErr(null); }} keyboardType="decimal-pad" placeholder="8000" />
-        <View style={{ flexDirection: 'row', gap: space.sm }}>
-          <FilterChip label="Monthly" selected={period === 'MONTHLY'} onPress={() => setPeriod('MONTHLY')} />
-          <FilterChip label="Weekly" selected={period === 'WEEKLY'} onPress={() => setPeriod('WEEKLY')} />
+
+        <TextField
+          label="Amount (₹)"
+          value={amount}
+          onChangeText={(v) => { setAmount(v); setErr(null); }}
+          keyboardType="decimal-pad"
+          placeholder="8000"
+        />
+
+        <View style={{ gap: 6 }}>
+          <Text style={type.label}>Period</Text>
+          <View style={{ flexDirection: 'row', gap: space.sm }}>
+            <FilterChip label="Monthly" selected={period === 'MONTHLY'} onPress={() => setPeriod('MONTHLY')} />
+            <FilterChip label="Weekly" selected={period === 'WEEKLY'} onPress={() => setPeriod('WEEKLY')} />
+          </View>
         </View>
-        <TextField label="Warn me at (%)" value={thresholds} onChangeText={setThresholds} keyboardType="numbers-and-punctuation" hint="Default 75, 90, 100" />
+
+        <TextField
+          label="Warn me at (%)"
+          value={thresholds}
+          onChangeText={setThresholds}
+          keyboardType="numbers-and-punctuation"
+          hint="Default 75, 90, 100"
+        />
+
+        <View style={styles.periodCard}>
+          <Text style={[type.caption, { color: colors.textSecondary }]}>Calculated Period Coverage</Text>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: space.xs }}>
+            <View>
+              <Text style={type.caption}>Start Date</Text>
+              <Text style={[type.bodyStrong, { fontSize: 13 }]}>{periodInfo.startStr}</Text>
+            </View>
+            <Icon name="arrow-forward" size={14} color={colors.textMuted} />
+            <View style={{ alignItems: 'flex-end' }}>
+              <Text style={type.caption}>End Date</Text>
+              <Text style={[type.bodyStrong, { fontSize: 13 }]}>{periodInfo.endStr}</Text>
+            </View>
+          </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: space.xs, paddingTop: space.xs, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border }}>
+            <Icon name="sync-outline" size={12} color={colors.primary} />
+            <Text style={[type.caption, { color: colors.primary, fontSize: 12 }]}>{periodInfo.cycleDesc}</Text>
+          </View>
+        </View>
+
+        {err ? <InlineNotice tone="error" text={err} /> : null}
       </ScrollView>
     </BottomSheet>
   );
@@ -464,7 +544,15 @@ export default function Budgets() {
 }
 
 const styles = StyleSheet.create({
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  periodCard: {
+    padding: space.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    gap: 4,
+  },
   icon: { width: 44, height: 44, borderRadius: radius.md, alignItems: 'center', justifyContent: 'center' },
   segmentWrap: {
     flexDirection: 'row',

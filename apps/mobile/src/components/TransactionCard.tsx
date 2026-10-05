@@ -39,7 +39,7 @@ export const TransactionCard = memo(function TransactionCard({ expense: e, onPre
       onPress={onPress}
       scaleTo={0.985}
       accessibilityRole="button"
-      accessibilityLabel={`${formatINR(e.amountPaise)} to ${e.payeeName ?? e.upiId ?? 'payee'} for ${e.reason}`}
+      accessibilityLabel={`${formatINR(e.amountPaise)} to ${e.payeeName ?? e.upiId ?? 'payee'}${e.reason ? ` for ${e.reason}` : ` · ${e.category}`}`}
       accessibilityHint="Opens payment details"
       style={styles.card}
     >
@@ -49,7 +49,7 @@ export const TransactionCard = memo(function TransactionCard({ expense: e, onPre
       <View style={{ flex: 1, gap: 2 }}>
         <Text style={type.bodyStrong} numberOfLines={1}>{e.payeeName || e.upiId || 'Cash payment'}</Text>
         <Text style={[type.label]} numberOfLines={1}>
-          {e.financialType === 'LENT' ? 'Money Lent · Udhaar' : `${e.reason} · ${e.category}`}
+          {e.financialType === 'LENT' ? 'Money Lent · Udhaar' : (e.reason ? `${e.reason} · ${e.category}` : e.category)}
         </Text>
         <Text style={type.caption}>{fmtRelative(e.expenseDate)}</Text>
         {showUtr && e.utr ? (

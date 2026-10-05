@@ -49,7 +49,9 @@ export function payloadFromExpense(e: LocalExpense): UpiPayload | null {
 export function buildUriForExpense(e: LocalExpense, shareNote: boolean): string {
   const p = payloadFromExpense(e);
   if (!p) throw new Error('Payment details are missing for this expense.');
-  return buildUpiPaymentUri(p, { amountPaise: e.amountPaise, note: shareNote ? e.reason : undefined });
+  const trimmedReason = e.reason ? e.reason.trim() : '';
+  const note = (shareNote && trimmedReason) ? trimmedReason : undefined;
+  return buildUpiPaymentUri(p, { amountPaise: e.amountPaise, note });
 }
 
 /** Ensures the expense reached USER_RETURNED before the user's answer is recorded. */

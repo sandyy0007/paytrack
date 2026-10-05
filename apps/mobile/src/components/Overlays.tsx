@@ -11,12 +11,14 @@ export function BottomSheet({
   title,
   children,
   footer,
+  fullHeight,
 }: {
   visible: boolean;
   onClose: () => void;
   title?: string;
   children: ReactNode;
   footer?: ReactNode;
+  fullHeight?: boolean;
 }) {
   const insets = useSafeAreaInsets();
   return (
@@ -31,21 +33,22 @@ export function BottomSheet({
             exiting={SlideOutDown.duration(180)}
             style={[
               styles.sheet,
+              fullHeight && styles.sheetFullHeight,
               elevation.floating,
               { paddingBottom: footer ? 0 : Math.max(insets.bottom, 20) + space.lg },
             ]}
           >
             <KeyboardAvoidingView
               behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-              style={styles.sheetContent}
+              style={[styles.sheetContent, fullHeight && { flex: 1 }]}
             >
               <View style={styles.handle} />
               {title ? <Text style={[type.h3, { marginBottom: space.md }]} accessibilityRole="header">{title}</Text> : null}
-              <View style={styles.bodyWrap}>
+              <View style={[styles.bodyWrap, fullHeight && { flex: 1, minHeight: 0 }]}>
                 {children}
               </View>
               {footer ? (
-                <View style={[styles.footerWrap, { paddingBottom: Math.max(insets.bottom, 24) + space.md }]}>
+                <View style={[styles.footerWrap, { paddingBottom: Math.max(insets.bottom, 20) + space.md }]}>
                   {footer}
                 </View>
               ) : null}
@@ -96,7 +99,11 @@ const styles = StyleSheet.create({
   scrim: { backgroundColor: 'rgba(0,0,0,0.6)' },
   sheet: {
     position: 'absolute', left: 0, right: 0, bottom: 0, backgroundColor: colors.bgElevated, borderTopLeftRadius: radius.xxl,
-    borderTopRightRadius: radius.xxl, paddingTop: space.xl, paddingHorizontal: space.xl, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.borderStrong, maxHeight: '88%', overflow: 'hidden',
+    borderTopRightRadius: radius.xxl, paddingTop: space.lg, paddingHorizontal: space.xl, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.borderStrong, maxHeight: '92%', overflow: 'hidden',
+  },
+  sheetFullHeight: {
+    height: '92%',
+    maxHeight: '94%',
   },
   sheetContent: {
     flexShrink: 1,
@@ -107,11 +114,13 @@ const styles = StyleSheet.create({
   },
   footerWrap: {
     flexShrink: 0,
-    paddingTop: space.md,
+    paddingTop: space.sm,
     gap: space.sm,
     backgroundColor: colors.bgElevated,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
   },
-  handle: { alignSelf: 'center', width: 40, height: 5, borderRadius: 3, backgroundColor: colors.borderStrong, marginBottom: space.lg },
+  handle: { alignSelf: 'center', width: 40, height: 5, borderRadius: 3, backgroundColor: colors.borderStrong, marginBottom: space.md },
   centerWrap: { alignItems: 'center', justifyContent: 'center', padding: space.xl },
   dialog: { width: '100%', maxWidth: 420, backgroundColor: colors.bgElevated, borderRadius: radius.xl, padding: space.xl, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.borderStrong },
 });

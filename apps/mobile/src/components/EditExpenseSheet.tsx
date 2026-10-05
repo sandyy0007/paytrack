@@ -34,7 +34,6 @@ export function EditExpenseSheet({ expense, onClose }: { expense: LocalExpense |
 
   const save = async () => {
     if (!expense) return;
-    if (!reason.trim()) return setErr('Reason is required.');
     if (!CATEGORY_NAME_RE.test(category)) return setErr('Choose a category.');
     setBusy(true);
     try {
@@ -57,7 +56,7 @@ export function EditExpenseSheet({ expense, onClose }: { expense: LocalExpense |
   return (
     <BottomSheet visible={!!expense} onClose={onClose} title="Edit expense">
       <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: space.lg }}>
-        <TextField label="Reason" value={reason} onChangeText={setReason} maxLength={REASON_MAX} />
+        <TextField label="Reason (optional)" value={reason} onChangeText={setReason} maxLength={REASON_MAX} />
         <View style={{ gap: space.sm }}>
           <Text style={type.label}>Category</Text>
           <View style={styles.chips}>

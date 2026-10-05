@@ -175,7 +175,7 @@ export default function Success() {
           {isLent ? <Row k="Type" v="Money Lent (Udhaar)" /> : null}
           <Row k="Payee Name" v={e.payeeName ?? '—'} />
           <Row k="Payee UPI ID" v={e.upiId ?? '—'} copy />
-          <Row k="Purpose / Category" v={`${e.reason} · ${e.category}`} />
+          <Row k="Purpose / Category" v={e.reason ? `${e.reason} · ${e.category}` : e.category} />
           {e.utr ? <Row k="Bank UTR" v={e.utr} copy /> : null}
           {e.transactionId ? <Row k="Transaction ID" v={e.transactionId} copy /> : null}
           {e.approvalReference && !e.utr ? <Row k="Approval Ref" v={e.approvalReference} copy /> : null}

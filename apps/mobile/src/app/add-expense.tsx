@@ -45,7 +45,6 @@ export default function AddExpense() {
   const save = async () => {
     const a = parseRupeesToPaise(amount);
     if (!a.ok) return setErr('Enter a valid amount (₹1 – ₹10,00,000).');
-    if (!reason.trim()) return setErr('Add what this was for.');
     if (!category || !CATEGORY_NAME_RE.test(category)) return setErr('Choose a category.');
     setBusy(true);
     try {
@@ -53,7 +52,7 @@ export default function AddExpense() {
       const when = new Date(date);
       when.setHours(now.getHours(), now.getMinutes(), now.getSeconds());
       await createExpense({
-        amountPaise: a.paise, payeeName: payee.trim() || null, upiId: null, reason, category, paymentMethod: method,
+        amountPaise: a.paise, payeeName: payee.trim() || null, upiId: null, reason: reason.trim(), category, paymentMethod: method,
         qrSource: 'NONE', qrParams: null, expenseDate: when.toDateString() === now.toDateString() ? undefined : when.toISOString(),
       });
       scheduleSync();
@@ -71,7 +70,7 @@ export default function AddExpense() {
     <Screen back title="Add Expense" keyboard footer={<PrimaryButton label="Save expense" icon="checkmark" onPress={save} loading={busy} />}>
       <InlineNotice icon="information-circle-outline" text="For cash or card payments. Paying by UPI? Use + PAY so the record is created with the payment." />
       <TextField label="Amount (₹)" value={amount} onChangeText={(t) => { setAmount(t); setErr(null); }} keyboardType="decimal-pad" placeholder="0" autoFocus style={{ fontSize: 28, height: 64 }} />
-      <TextField label="What was it for?" value={reason} onChangeText={(t) => setReason(t.slice(0, REASON_MAX))} placeholder="e.g. tea, auto fare" />
+      <TextField label="What was it for? (optional)" value={reason} onChangeText={(t) => setReason(t.slice(0, REASON_MAX))} placeholder="e.g. tea, auto fare" />
       <TextField label="Paid to (optional)" value={payee} onChangeText={setPayee} placeholder="Shop or person" maxLength={100} />
       <View style={{ gap: space.sm }}>
         <Text style={type.label}>Paid by</Text>
