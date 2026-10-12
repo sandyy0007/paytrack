@@ -358,5 +358,179 @@ describe('Merchant UPI QR Intent Preservation & Compatibility (Phase 18)', () =>
       expect(mcDiff?.inRaw).toBe('5411');
       expect(mcDiff?.inLaunched).toBe('5411');
     });
+
+    // REGRESSION 1: Signed static QR with NO amount injects am & cu BEFORE sign=
+    it('REGRESSION 1: Signed static QR without amount injects am & cu BEFORE sign tag per NPCI Section 3.1', () => {
+      const signature = 'MEYCIQD+abc123/xyz+def==';
+      const rawSignedStatic = `upi://pay?pa=kirana@ybl&pn=Kirana%20Store&mc=5411&mode=01&orgid=180001&sign=${encodeURIComponent(signature)}`;
+
+      const r = parseUpiQr(rawSignedStatic);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+
+      expect(r.payload.amountPaise).toBeUndefined();
+      expect(r.payload.sign).toBe(signature);
+
+      const launchUri = getZeroAlterationUpiLaunchUri(r.payload, {
+        rawQrPayload: rawSignedStatic,
+        qrSource: 'UPI_URI',
+        amountPaise: 25000, // ₹250.00
+        reason: 'Groceries',
+        shareNote: true,
+      });
+
+      // 1. Amount and currency must be present
+      expect(launchUri).toContain('am=250.00');
+      expect(launchUri).toContain('cu=INR');
+      expect(launchUri).toContain('tn=Groceries');
+
+      // 2. All original merchant tags must be preserved
+      expect(launchUri).toContain('pa=kirana@ybl');
+      expect(launchUri).toContain('pn=Kirana%20Store');
+      expect(launchUri).toContain('mc=5411');
+      expect(launchUri).toContain('mode=01');
+      expect(launchUri).toContain('orgid=180001');
+
+      // 3. Signature MUST remain at the very end of the URI per NPCI specification
+      const signParam = `sign=${encodeURIComponent(signature)}`;
+      expect(launchUri.endsWith(signParam)).toBe(true);
+
+      // 4. Injected parameters must appear BEFORE the signature tag
+      const amIndex = launchUri.indexOf('am=250.00');
+      const signIndex = launchUri.indexOf('sign=');
+      expect(amIndex).toBeLessThan(signIndex);
+    });
+
+    // REGRESSION 2: QR with am=0 or am=0.00 placeholder replaces with confirmed amount
+    it('REGRESSION 2: Replaces am=0 or am=0.00 placeholder with confirmed user amount', () => {
+      const rawZeroAmount = 'upi://pay?pa=counter@paytm&pn=SuperStore&mc=5411&tr=TXN1002&mode=02&orgid=159001&am=0.00&cu=INR';
+
+      const r = parseUpiQr(rawZeroAmount);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+
+      expect(r.payload.amountPaise).toBeUndefined(); // correctly identified as open amount
+
+      const launchUri = getZeroAlterationUpiLaunchUri(r.payload, {
+        rawQrPayload: rawZeroAmount,
+        qrSource: 'UPI_URI',
+        amountPaise: 45000, // ₹450.00
+      });
+
+      expect(launchUri).toContain('am=450.00');
+      expect(launchUri).not.toContain('am=0.00');
+      expect(launchUri).not.toContain('am=0');
+      expect(launchUri).toContain('tr=TXN1002');
+      expect(launchUri).toContain('mode=02');
+    });
+
+    // REGRESSION 3: Safely encodes literal spaces in query strings for RFC 3986 Android intent compliance
+    it('REGRESSION 3: Encodes literal spaces in payee name or note to %20 for Android intent compliance', () => {
+      const rawWithSpaces = 'upi://pay?pa=shop@upi&pn=Ramesh Kumar Store&mc=5411&tn=Bill payment for invoice';
+
+      const r = parseUpiQr(rawWithSpaces);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+
+      const launchUri = getZeroAlterationUpiLaunchUri(r.payload, {
+        rawQrPayload: rawWithSpaces,
+        qrSource: 'UPI_URI',
+        amountPaise: 8000,
+      });
+
+      expect(launchUri).not.toContain(' ');
+      expect(launchUri).toContain('pn=Ramesh%20Kumar%20Store');
+      expect(launchUri).toContain('tn=Bill%20payment%20for%20invoice');
+      expect(launchUri).toContain('am=80.00');
+    });
+
+    // REGRESSION 4: Normalizes uppercase scheme/host to lowercase upi://pay?
+    it('REGRESSION 4: Normalizes uppercase scheme and host to lowercase upi://pay?', () => {
+      const rawUpper = 'UPI://PAY?PA=merchant@paytm&PN=Outlet&MC=5499&MODE=02';
+
+      const r = parseUpiQr(rawUpper);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+
+      const launchUri = getZeroAlterationUpiLaunchUri(r.payload, {
+        rawQrPayload: rawUpper,
+        qrSource: 'UPI_URI',
+        amountPaise: 12500,
+      });
+
+      expect(launchUri.startsWith('upi://pay?')).toBe(true);
+      expect(launchUri).toContain('am=125.00');
+    });
+
+    // REGRESSION 5: Phase 2 Test Fixtures (A through E)
+    describe('Phase 2 Fixtures Specification Verification', () => {
+      it('Fixture A: Basic merchant UPI QR (no amount)', () => {
+        const rawA = 'upi://pay?pa=merchant@ybl&pn=Kirana%20Store&mc=5411&mode=01&orgid=180001';
+        const r = parseUpiQr(rawA);
+        expect(r.ok).toBe(true);
+        if (!r.ok) return;
+
+        const uri = getZeroAlterationUpiLaunchUri(r.payload, {
+          rawQrPayload: rawA,
+          qrSource: 'UPI_URI',
+          amountPaise: 5000,
+        });
+
+        expect(uri).toBe('upi://pay?pa=merchant@ybl&pn=Kirana%20Store&mc=5411&mode=01&orgid=180001&am=50.00&cu=INR');
+      });
+
+      it('Fixture B: Merchant QR with fixed amount (100% byte-for-byte identical)', () => {
+        const rawB = 'upi://pay?pa=biller@paytm&pn=Retail%20Outlet&mc=5411&am=120.50&cu=INR&tr=INV987654';
+        const r = parseUpiQr(rawB);
+        expect(r.ok).toBe(true);
+        if (!r.ok) return;
+
+        const uri = getZeroAlterationUpiLaunchUri(r.payload, {
+          rawQrPayload: rawB,
+          qrSource: 'UPI_URI',
+          amountPaise: 12050,
+        });
+
+        expect(uri).toBe(rawB);
+      });
+
+      it('Fixture C: Merchant QR with optional reference parameters and am=0.00', () => {
+        const rawC = 'upi://pay?pa=counter@icici&pn=SuperMarket&mc=5411&tr=TXN456789&tid=T1001&mid=M888&mode=02&orgid=159001&am=0.00&cu=INR';
+        const r = parseUpiQr(rawC);
+        expect(r.ok).toBe(true);
+        if (!r.ok) return;
+
+        const uri = getZeroAlterationUpiLaunchUri(r.payload, {
+          rawQrPayload: rawC,
+          qrSource: 'UPI_URI',
+          amountPaise: 25000,
+        });
+
+        expect(uri).toBe('upi://pay?pa=counter@icici&pn=SuperMarket&mc=5411&tr=TXN456789&tid=T1001&mid=M888&mode=02&orgid=159001&am=250.00&cu=INR');
+      });
+
+      it('Fixture D: QR with special characters and cryptographic signature', () => {
+        const rawD = 'upi://pay?pa=merchant@hdfcbank&pn=A%20%26%20B%20Store&mc=5812&mode=01&orgid=180000&sign=MEYCIQC%2B123%2Fxyz%2Bdef%3D%3D';
+        const r = parseUpiQr(rawD);
+        expect(r.ok).toBe(true);
+        if (!r.ok) return;
+
+        const uri = getZeroAlterationUpiLaunchUri(r.payload, {
+          rawQrPayload: rawD,
+          qrSource: 'UPI_URI',
+          amountPaise: 35000,
+        });
+
+        expect(uri).toBe('upi://pay?pa=merchant@hdfcbank&pn=A%20%26%20B%20Store&mc=5812&mode=01&orgid=180000&am=350.00&cu=INR&sign=MEYCIQC%2B123%2Fxyz%2Bdef%3D%3D');
+      });
+
+      it('Fixture E: Unsupported / Non-UPI payload rejected gracefully', () => {
+        expect(parseUpiQr('https://phonepe.com/pay?pa=test').ok).toBe(false);
+        expect(parseUpiQr('https://paytm.mp/1234').ok).toBe(false);
+        expect(parseUpiQr('invalid_plain_text').ok).toBe(false);
+        expect(parseUpiQr('').ok).toBe(false);
+      });
+    });
   });
 });
+

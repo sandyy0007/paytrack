@@ -76,7 +76,25 @@ export async function launchUpiPayment(uri: string, packageName: string | null):
     } catch (e) {
       const msg = String((e as Error)?.message ?? e);
       if (packageName && /activity|resolve|found|install/i.test(msg)) {
-        return { launched: false, reason: 'NO_APP', message: `${appNameForPackage(packageName)} doesn't seem to be installed.` };
+        // Fallback: If preferred app is uninstalled or cannot resolve the intent,
+        // try the system chooser before declaring failure.
+        try {
+          const fallbackActivity = IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+            data: uri,
+          }).then((r) => ({ kind: 'result' as const, r }));
+          const winner = await Promise.race([fallbackActivity, fg.promise.then(() => ({ kind: 'foreground' as const }))]);
+          if (winner.kind === 'result') {
+            return {
+              launched: true,
+              returnedVia: 'result',
+              response: extractResponse(winner.r.extra, winner.r.data),
+              resultCode: winner.r.resultCode,
+            };
+          }
+          return { launched: true, returnedVia: 'foreground', response: null, resultCode: null };
+        } catch {
+          return { launched: false, reason: 'NO_APP', message: `${appNameForPackage(packageName)} doesn't seem to be installed, and no other UPI app was found.` };
+        }
       }
       return /activity|resolve|found/i.test(msg) ? noApp : { launched: false, reason: 'LAUNCH_FAILED', message: "Couldn't open the UPI app." };
     } finally {

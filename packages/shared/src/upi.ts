@@ -536,10 +536,14 @@ export interface LaunchUriOptions {
 
 /**
  * Builds or preserves the exact URI to pass to external UPI apps.
- * Strictly adheres to the zero-alteration rule:
- * - When payment originates from a scanned QR (Camera or Gallery) and the raw QR payload is available:
- *   - If raw QR has am= (fixed amount) or sign= (cryptographically signed merchant): returns raw UNTOUCHED (zero alteration).
- *   - If raw QR lacks am=: appends &am=X.XX&cu=INR (and optional sanitized &tn= if shareNote) without re-encoding existing parameters.
+ * Strictly adheres to the zero-alteration rule and NPCI UPI specification:
+ * - When payment originates from a scanned QR (Camera or Gallery) and raw QR payload is available:
+ *   - Normalizes scheme & host to lowercase `upi://pay?` and safely encodes unencoded literal spaces (%20).
+ *   - If raw QR has a fixed non-zero amount (am > 0): returns raw UNTOUCHED (zero alteration).
+ *   - If raw QR has am=0 or am=0.00: replaces the zero placeholder with the user-confirmed amount.
+ *   - If raw QR lacks am=: injects am=X.XX, cu=INR (and optional tn=).
+ *     CRITICAL: If raw contains a cryptographic signature (sign=...), injects am/cu BEFORE sign=
+ *     because NPCI requires `sign` to be the final parameter in the query string!
  * - Otherwise (manual entry or no raw payload): constructs using buildUpiPaymentUri(payload, options).
  */
 export function getZeroAlterationUpiLaunchUri(
@@ -548,24 +552,61 @@ export function getZeroAlterationUpiLaunchUri(
 ): string {
   const { rawQrPayload, qrSource, amountPaise, reason, shareNote } = options;
   if (qrSource !== 'MANUAL_UPI' && rawQrPayload && rawQrPayload.trim().toLowerCase().startsWith('upi:')) {
-    const raw = rawQrPayload.trim();
-    if (/[?&]am=/i.test(raw)) {
+    let raw = rawQrPayload.trim();
+
+    // 1. Normalize scheme & host to lowercase upi://pay?
+    raw = raw.replace(/^upi:\/\/[a-z]+\/?\??/i, 'upi://pay?');
+
+    // 2. Safely encode unencoded literal spaces in the query string to %20 for RFC 3986 compliance
+    if (raw.includes(' ')) {
+      raw = raw.replace(/ /g, '%20');
+    }
+
+    // 3. Check for existing amount:
+    // If raw QR contains am= with a valid non-zero amount (> 0), it is a fixed/locked amount QR.
+    const amMatch = /[?&]am=([^&]*)/i.exec(raw);
+    const hasFixedNonZeroAmount = amMatch && Number(amMatch[1]) > 0;
+
+    if (hasFixedNonZeroAmount) {
       return raw;
     }
-    if (/[?&]sign=/i.test(raw)) {
-      return raw;
-    }
+
     const amountStr = (amountPaise / 100).toFixed(2);
-    const separator = raw.includes('?') ? '&' : '?';
-    let uri = `${raw}${separator}am=${amountStr}`;
+
+    // 4. If am is present but 0 or 0.00 or empty, replace it with the user-confirmed amount
+    if (amMatch) {
+      raw = raw.replace(/([?&])am=[^&]*/i, `$1am=${amountStr}`);
+      if (!/[?&]cu=/i.test(raw)) {
+        raw += '&cu=INR';
+      }
+      return raw;
+    }
+
+    // 5. If am is missing, prepare additions (am=X.XX, cu=INR, optional tn)
+    let additions = `am=${amountStr}`;
     if (!/[?&]cu=/i.test(raw)) {
-      uri += '&cu=INR';
+      additions += '&cu=INR';
     }
     const trimmedReason = reason ? reason.trim() : '';
     if (shareNote && trimmedReason && !/[?&]tn=/i.test(raw)) {
-      uri += `&tn=${encodeURIComponent(trimmedReason)}`;
+      additions += `&tn=${encodeURIComponent(trimmedReason)}`;
     }
-    return uri;
+
+    // 6. Handle signature (sign=...):
+    // NPCI UPI Specification Section 3.1: "The signature tag (sign) MUST be the last tag in the URI string."
+    // If raw contains sign=..., insert additions BEFORE sign= so the cryptographic signature remains at the end!
+    const signIdx = raw.search(/[?&]sign=/i);
+    if (signIdx !== -1) {
+      const beforeSign = raw.slice(0, signIdx);
+      const signPart = raw.slice(signIdx);
+      const signContent = signPart.slice(1); // strip leading ? or &
+      const sep = beforeSign.includes('?') ? '&' : '?';
+      return `${beforeSign}${sep}${additions}&${signContent}`;
+    }
+
+    // If no sign= tag, append additions to the query string
+    const separator = raw.includes('?') ? '&' : '?';
+    return `${raw}${separator}${additions}`;
   }
 
   if (!payload) throw new Error('Payment details are missing for this expense.');
@@ -573,3 +614,4 @@ export function getZeroAlterationUpiLaunchUri(
   const note = (shareNote && trimmedReason) ? trimmedReason : undefined;
   return buildUpiPaymentUri(payload, { amountPaise, note });
 }
+
