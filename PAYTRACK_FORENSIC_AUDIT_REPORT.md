@@ -363,3 +363,65 @@ C:\Users\SANDEEP\Desktop\Paytrack
 - [x] All modifications reviewed in final Git diff (`git diff --check` passes).
 - [x] Every unverified item (physical bank UPI clearance) is explicitly declared.
 - [x] Audit report written to disk at `PAYTRACK_FORENSIC_AUDIT_REPORT.md`.
+
+---
+
+## Q. Production Deployment & Release Artifact Verification
+
+### 1. GitHub Repository & Push Status
+- **Repository URL**: `https://github.com/sandyy0007/paytrack`
+- **Branch**: `master`
+- **Pushed Commit SHA**: `3069e8d052ea14de17fd09b80c8890aeeb0a23d1`
+- **Remote SHA Verification**: Verified via `git ls-remote origin master` (exact match).
+- **Status**: **PUSHED AND VERIFIED**
+- **Git LFS**: Configured for `*.apk` and `*.aab` (17 objects uploaded, total ~2.0 GB).
+
+### 2. Backend Readiness & Deployment Configuration
+- **Platform**: Render (Blueprint specification via `render.yaml`)
+- **Service Type**: Web Service (`paytrack-api`, Node.js environment)
+- **Database**: Managed PostgreSQL (`paytrack-db`, persistent storage, Singapore region)
+- **Startup Migration**: Automatic in `apps/server/src/index.ts` applying migrations `001_init.sql` through `004_optional_reason.sql`.
+- **Health Check Endpoint**: `/health` (probes DB connectivity with `SELECT 1`, returns `{ ok: true }`).
+- **Graceful Shutdown**: Intercepts `SIGTERM`/`SIGINT`, closes server listener, terminates DB pool with 10s watchdog.
+- **Required Environment Variables (by name only)**:
+  - `NODE_ENV` (`production`)
+  - `DATABASE_URL` (injected from `paytrack-db.connectionString`)
+  - `JWT_SECRET` (auto-generated >= 32 chars)
+  - `PORT` (`10000`)
+  - `TRUST_PROXY` (`1`)
+  - `ACCESS_TOKEN_TTL_SECONDS` (`900`)
+  - `REFRESH_TOKEN_TTL_DAYS` (`30`)
+- **Hosting Live Status**: **UNVERIFIED — REQUIRES USER ACTION**
+  *(Requires user to log into Render dashboard, click "New +" -> "Blueprint", select repo `sandyy0007/paytrack`, and trigger deployment)*.
+
+### 3. Mobile Production API Configuration
+- **Resolution Strategy**: `Constants.expoConfig?.extra?.apiUrl` with runtime override via `useSettings.getState().apiUrlOverride`.
+- **In-App Management**: Configurable live in Settings -> Server Settings.
+- **Production URL Injection**: When Render finishes deployment and assigns `https://paytrack-api-xxxx.onrender.com`, it can be set in `apps/mobile/app.json` or entered via in-app server settings.
+
+### 4. Release Binaries Build Verification
+- **Package Name**: `com.paytrack.expensetracker`
+- **Version Name**: `1.0.7`
+- **Version Code**: `8`
+- **Release APK**:
+  - File: `PayTrack-release.apk` (and `apps/mobile/android/app/build/outputs/apk/release/app-release.apk`)
+  - Size: `140,964,137 bytes`
+  - Build Command: `.\gradlew.bat assembleRelease` (Exit Code: 0)
+  - Archive Integrity: Verified (Contains `assets/index.android.bundle` 4,110,012 bytes and `AndroidManifest.xml`)
+- **Release AAB**:
+  - File: `PayTrack-release.aab` (and `apps/mobile/android/app/build/outputs/bundle/release/app-release.aab`)
+  - Size: `93,027,779 bytes`
+  - Build Command: `.\gradlew.bat bundleRelease` (Exit Code: 0)
+  - Archive Integrity: Verified (Contains `base/assets/index.android.bundle` 4,110,012 bytes and `base/manifest/AndroidManifest.xml`)
+- **Status**: **BUILD VERIFIED**
+
+### 5. Final Status Summary
+| Component | Status Label | Details |
+|---|---|---|
+| GitHub Push | **PUSHED AND VERIFIED** | Commit `3069e8d` on `master` matches remote. Git LFS active. |
+| Automated Tests | **PASS** | 120/120 tests passed across shared and server suites. |
+| Typecheck & Export | **PASS** | Monorepo typecheck 0 errors, Metro exported 2,073 modules. |
+| Release APK / AAB | **BUILD VERIFIED** | Built clean from current source; archive integrity verified. |
+| Render Backend Deployment | **UNVERIFIED — REQUIRES USER ACTION** | Awaiting Blueprint launch in Render dashboard. |
+| Physical Device Verification | **UNVERIFIED — REQUIRES HARDWARE TEST** | No physical device attached to local environment. |
+| Live Merchant UPI Payment | **UNVERIFIED — REQUIRES PHYSICAL DEVICE WITH ACTIVE SIM** | Real banking transaction clearance cannot be simulated. |
