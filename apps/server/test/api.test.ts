@@ -6,10 +6,14 @@ import { createPool } from '../src/db';
 import { migrate } from '../src/migrate';
 
 process.env.BCRYPT_ROUNDS = '4';
-const db = createPool(process.env.TEST_DATABASE_URL ?? 'postgres://postgres@localhost:5433/paytrack_test');
+const db = createPool(process.env.TEST_DATABASE_URL ?? 'postgres://postgres:postgres@localhost:5432/paytrack_test');
 const app = createApp(db, { rateLimit: false });
 
 beforeAll(async () => {
+  const currentDbName = (await db.query<{ current_database: string }>('SELECT current_database()')).rows[0]?.current_database;
+  if (!currentDbName || !currentDbName.endsWith('_test')) {
+    throw new Error(`SAFETY ERROR: Refusing to drop schema on non-test database: "${currentDbName}". Database name must end with "_test".`);
+  }
   await db.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public;');
   await migrate(db);
 });

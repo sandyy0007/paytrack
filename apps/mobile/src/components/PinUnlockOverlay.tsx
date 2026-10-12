@@ -4,9 +4,10 @@ import { Icon } from './Icon';
 import { ScalePressable } from './ScalePressable';
 import { haptic } from '@/lib/haptics';
 import { useSettings } from '@/lib/settings';
-import { colors, radius, space, type } from '@/theme/tokens';
+import { colors, radius, space, type, useIsLight } from '@/theme/tokens';
 
 export function PinUnlockOverlay({ onUnlocked }: { onUnlocked: () => void }) {
+  const isLight = useIsLight();
   const pin = useSettings((s) => s.appLockPin);
   const [entered, setEntered] = useState('');
   const [error, setError] = useState(false);

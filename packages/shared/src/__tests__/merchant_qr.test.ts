@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildUpiPaymentUri,
   createNormalizedPaymentIntent,
+  getZeroAlterationUpiLaunchUri,
   maskUpiUriForLogging,
   parseUpiQr,
 } from '../upi';
@@ -183,5 +184,179 @@ describe('Merchant UPI QR Intent Preservation & Compatibility (Phase 18)', () =>
     expect(masked).toContain('am=100.00');
     expect(masked).toContain('tr=TX***56');
     expect(masked).toContain('sign=MEYCIQ***');
+  });
+
+  // Zero-Alteration Launch URI Tests
+  describe('Zero-Alteration Launch URI Verification', () => {
+    it('TEST 11: passes signed merchant QR 100% UNTOUCHED (SHA-256 byte-for-byte identical)', async () => {
+      const crypto = await import('node:crypto');
+      const rawSigned = 'upi://pay?pa=merchant@icici&pn=BigStore&mc=5411&mode=01&orgid=159001&tr=REF8899&am=550.00&cu=INR&sign=MEQCID123XYZ456%2B%2B==';
+      const inputHash = crypto.createHash('sha256').update(rawSigned).digest('hex');
+
+      const r = parseUpiQr(rawSigned);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+
+      const launchUri = getZeroAlterationUpiLaunchUri(r.payload, {
+        rawQrPayload: rawSigned,
+        qrSource: 'UPI_URI',
+        amountPaise: 55000,
+        reason: 'Shopping',
+        shareNote: true,
+      });
+
+      const outputHash = crypto.createHash('sha256').update(launchUri).digest('hex');
+      expect(launchUri).toBe(rawSigned);
+      expect(outputHash).toBe(inputHash);
+    });
+
+    it('TEST 12: passes fixed amount QR UNTOUCHED', () => {
+      const rawFixed = 'upi://pay?pa=shop@upi&pn=Shop&am=120.00&cu=INR';
+      const r = parseUpiQr(rawFixed);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+
+      const launchUri = getZeroAlterationUpiLaunchUri(r.payload, {
+        rawQrPayload: rawFixed,
+        qrSource: 'UPI_URI',
+        amountPaise: 12000,
+      });
+      expect(launchUri).toBe(rawFixed);
+    });
+
+    it('TEST 13: dynamic amount QR appends am and cu without modifying existing parameters', () => {
+      const rawDynamic = 'upi://pay?pa=chai@paytm&pn=Chai%20Wala&mc=5814&mode=02&orgid=180001';
+      const r = parseUpiQr(rawDynamic);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+
+      const launchUri = getZeroAlterationUpiLaunchUri(r.payload, {
+        rawQrPayload: rawDynamic,
+        qrSource: 'UPI_URI',
+        amountPaise: 2000,
+        reason: 'Morning tea',
+        shareNote: true,
+      });
+
+      expect(launchUri.startsWith(rawDynamic)).toBe(true);
+      expect(launchUri).toContain('&am=20.00&cu=INR');
+      expect(launchUri).toContain('&tn=Morning%20tea');
+      // Original parameter ordering and encoding preserved 100%
+      expect(launchUri).toContain('mc=5814&mode=02&orgid=180001');
+    });
+
+    it('TEST 14: manual UPI entry reconstructs clean payment URI', () => {
+      const r = parseUpiQr('upi://pay?pa=person@oksbi&pn=Person');
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+
+      const launchUri = getZeroAlterationUpiLaunchUri(r.payload, {
+        rawQrPayload: null,
+        qrSource: 'MANUAL_UPI',
+        amountPaise: 150000,
+        reason: 'Repayment',
+        shareNote: false,
+      });
+
+      expect(launchUri).toContain('pa=person@oksbi');
+      expect(launchUri).toContain('am=1500.00');
+      expect(launchUri).toContain('cu=INR');
+    });
+
+    it('TEST 15: dynamic merchant QR does not duplicate cu when cu is already present in raw', () => {
+      const rawWithCu = 'upi://pay?pa=store@icici&pn=Store&mc=5411&cu=INR&mode=01&orgid=159001';
+      const r = parseUpiQr(rawWithCu);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+
+      const launchUri = getZeroAlterationUpiLaunchUri(r.payload, {
+        rawQrPayload: rawWithCu,
+        qrSource: 'UPI_URI',
+        amountPaise: 15000,
+      });
+
+      expect(launchUri).toContain('&am=150.00');
+      const occurrences = (launchUri.match(/cu=INR/g) || []).length;
+      expect(occurrences).toBe(1);
+    });
+
+    it('TEST 16: preserves unknown merchant parameters and + in signature byte-for-byte', () => {
+      const rawWithUnknownAndPlus = 'upi://pay?pa=shop@axis&pn=Shop&mc=5499&customVendorKey=XYZ+123&sign=ABCD+123==&am=100.00&cu=INR';
+      const r = parseUpiQr(rawWithUnknownAndPlus);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+
+      const launchUri = getZeroAlterationUpiLaunchUri(r.payload, {
+        rawQrPayload: rawWithUnknownAndPlus,
+        qrSource: 'UPI_URI',
+        amountPaise: 10000,
+      });
+
+      expect(launchUri).toBe(rawWithUnknownAndPlus);
+      expect(launchUri).toContain('customVendorKey=XYZ+123');
+      expect(launchUri).toContain('sign=ABCD+123==');
+    });
+
+    it('TEST 17: SHA-256 matches Node.js crypto and produces identical hash for raw and launched', async () => {
+      const crypto = await import('node:crypto');
+      const { sha256 } = await import('../sha256');
+
+      expect(sha256('')).toBe('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855');
+      expect(sha256('abc')).toBe('ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
+
+      const raw = 'upi://pay?pa=merchant@hdfcbank&pn=MegaStore&mc=5411&mode=02&sign=SIG+ABC==&am=250.00&cu=INR';
+      const expectedNodeHash = crypto.createHash('sha256').update(raw).digest('hex');
+      const tsHash = sha256(raw);
+      expect(tsHash).toBe(expectedNodeHash);
+
+      const r = parseUpiQr(raw);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+
+      const launchUri = getZeroAlterationUpiLaunchUri(r.payload, {
+        rawQrPayload: raw,
+        qrSource: 'UPI_URI',
+        amountPaise: 25000,
+      });
+
+      expect(sha256(launchUri)).toBe(tsHash);
+    });
+
+    it('TEST 18: buildUpiDiagnostics generates accurate diff between raw and launched URI', async () => {
+      const { buildUpiDiagnostics } = await import('../diagnostics');
+      const raw = 'upi://pay?pa=merchant@ybl&pn=Kirana&mc=5411&cu=INR&mode=01&orgid=189999';
+
+      const r = parseUpiQr(raw);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+
+      const launchUri = getZeroAlterationUpiLaunchUri(r.payload, {
+        rawQrPayload: raw,
+        qrSource: 'UPI_URI',
+        amountPaise: 5000,
+      });
+
+      const report = buildUpiDiagnostics(raw, launchUri, {
+        packageName: 'com.phonepe.app',
+        responseCode: '00',
+        transactionId: 'TXN1001',
+      });
+
+      expect(report.flowType).toBe('AUGMENTED');
+      expect(report.isZeroAlteration).toBe(false);
+      expect(report.intentAction).toBe('android.intent.action.VIEW');
+      expect(report.packageName).toBe('com.phonepe.app');
+
+      const amDiff = report.paramDiff.find((d) => d.key === 'am');
+      expect(amDiff).toBeDefined();
+      expect(amDiff?.status).toBe('ADDED');
+      expect(amDiff?.inLaunched).toBe('50.00');
+
+      const mcDiff = report.paramDiff.find((d) => d.key === 'mc');
+      expect(mcDiff).toBeDefined();
+      expect(mcDiff?.status).toBe('UNCHANGED');
+      expect(mcDiff?.inRaw).toBe('5411');
+      expect(mcDiff?.inLaunched).toBe('5411');
+    });
   });
 });

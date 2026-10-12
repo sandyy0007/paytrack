@@ -22,12 +22,13 @@ import { fmtDate, tzOffsetMinutes } from '@/lib/format';
 import { haptic } from '@/lib/haptics';
 import { expensesSince, getUdhaarSummary, listBudgets, listCategories, listEnvelopes, listLoans } from '@/lib/repo';
 import { syncNow } from '@/lib/sync';
-import { colors, radius, space, type } from '@/theme/tokens';
+import { colors, radius, space, type, useIsLight } from '@/theme/tokens';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 type TabType = 'OVERVIEW' | 'FORECAST' | 'CALENDAR' | 'REPORTS';
 
 export default function Analytics() {
+  const isLight = useIsLight();
   const [activeTab, setActiveTab] = useState<TabType>('OVERVIEW');
   const [forecastDays, setForecastDays] = useState<7 | 30 | 90>(30);
   const [selectedCalendarDay, setSelectedCalendarDay] = useState<string>(new Date().toISOString().slice(0, 10));

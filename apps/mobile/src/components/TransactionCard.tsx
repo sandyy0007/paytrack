@@ -4,6 +4,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import ReanimatedSwipeable, { type SwipeableMethods } from 'react-native-gesture-handler/ReanimatedSwipeable';
 import { fmtRelative } from '@/lib/format';
 import type { LocalExpense } from '@/lib/repo';
+import { useSettings } from '@/lib/settings';
 import { colors, fonts, radius, space, type } from '@/theme/tokens';
 import { categoryIcon, Icon, type IconName } from './Icon';
 import { ScalePressable } from './ScalePressable';
@@ -31,6 +32,8 @@ function Action({ icon, label, color, onPress }: { icon: IconName; label: string
 }
 
 export const TransactionCard = memo(function TransactionCard({ expense: e, onPress, onEdit, onDelete, showUtr }: Props) {
+  const themeMode = useSettings((s) => s.themeMode);
+  const isLight = themeMode === 'light';
   const ref = useRef<SwipeableMethods>(null);
   const cat = categoryMeta(e.category);
   const ref_ = e.utr ?? e.transactionReference;
@@ -41,7 +44,7 @@ export const TransactionCard = memo(function TransactionCard({ expense: e, onPre
       accessibilityRole="button"
       accessibilityLabel={`${formatINR(e.amountPaise)} to ${e.payeeName ?? e.upiId ?? 'payee'}${e.reason ? ` for ${e.reason}` : ` · ${e.category}`}`}
       accessibilityHint="Opens payment details"
-      style={styles.card}
+      style={[styles.card, isLight && { backgroundColor: '#FFFFFF', borderColor: '#E2E8F0' }]}
     >
       <View style={[styles.icon, { backgroundColor: `${cat.color}1f` }]}>
         <Icon name={categoryIcon(cat.icon)} size={20} color={cat.color} />

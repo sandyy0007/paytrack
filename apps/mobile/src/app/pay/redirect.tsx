@@ -10,8 +10,8 @@ import { UpiAppPicker } from '@/components/UpiAppPicker';
 import { copyText } from '@/lib/clipboard';
 import { haptic } from '@/lib/haptics';
 import { cancelPendingReminder, schedulePendingReminder } from '@/lib/notifications';
-import { maskUpiUriForLogging } from '@paytrack/shared';
-import { buildUriForExpense, run } from '@/lib/payActions';
+import { buildUpiDiagnostics, maskUpiUriForLogging } from '@paytrack/shared';
+import { buildUriForExpense, extractRawQrPayload, getLaunchUri, run } from '@/lib/payActions';
 import { getExpense, recordFailedPayment, saveSuccessfulPayment, transition, type LocalExpense } from '@/lib/repo';
 import { useSettings } from '@/lib/settings';
 import { appNameForPackage, launchUpiPayment } from '@/lib/upiLaunch';
@@ -41,18 +41,21 @@ export default function Redirect() {
       const { preferredUpiPackage, shareNoteWithPayee } = useSettings.getState();
       let uri: string;
       try {
-        uri = buildUriForExpense(e, shareNoteWithPayee);
+        uri = getLaunchUri(e, shareNoteWithPayee);
       } catch (err) {
         return setPhase({ kind: 'error', message: (err as Error).message });
       }
+
+      const raw = extractRawQrPayload(e);
+      const preReport = buildUpiDiagnostics(raw, uri, { packageName: preferredUpiPackage });
       if (__DEV__) {
-        console.log('[UPI_LAUNCH] parsed QR:', maskUpiUriForLogging(e.qrPayload ?? ''));
-        console.log('[UPI_LAUNCH] final URI:', maskUpiUriForLogging(uri));
+        console.log('[UPI_DIAGNOSTICS] Report:', JSON.stringify(preReport, null, 2));
       }
+
       const appName = appNameForPackage(preferredUpiPackage) ?? 'UPI app';
       // Record the hand-off first so an app kill mid-payment is recoverable.
       if (e.status !== 'PAYMENT_APP_OPENED') {
-        await run(() => transition(e.id, 'PAYMENT_APP_OPENED', { paymentApp: appName }));
+        await run(() => transition(e.id, 'PAYMENT_APP_OPENED', { paymentApp: appName, meta: { diagnostics: JSON.stringify(preReport) } }));
       }
       void schedulePendingReminder(e.id, e.payeeName ?? e.upiId ?? 'the payee');
       const outcome = await launchUpiPayment(uri, preferredUpiPackage);
@@ -84,9 +87,26 @@ export default function Redirect() {
         return;
       }
 
+      const postReport = buildUpiDiagnostics(raw, uri, {
+        packageName: preferredUpiPackage,
+        resultCode: outcome.resultCode,
+        responseCode: outcome.response?.responseCode,
+        transactionId: outcome.response?.txnId,
+        transactionReference: outcome.response?.txnRef,
+        approvalReference: outcome.response?.approvalRefNo,
+        utr: outcome.response?.utr,
+      });
+      if (__DEV__) {
+        console.log('[UPI_DIAGNOSTICS] Outcome Report:', JSON.stringify(postReport, null, 2));
+      }
+
       // 3. Fallback for foreground return / pending SUBMITTED / unconfirmed
       await run(() => transition(e.id, 'USER_RETURNED', {
-        meta: { returnedVia: outcome.returnedVia, ...(outcome.response ? { appReportedStatus: outcome.response.status } : {}) },
+        meta: {
+          returnedVia: outcome.returnedVia,
+          diagnostics: JSON.stringify(postReport),
+          ...(outcome.response ? { appReportedStatus: outcome.response.status } : {}),
+        },
       }));
       const ref = outcome.response?.approvalRefNo ?? outcome.response?.txnRef ?? outcome.response?.txnId ?? '';
       router.replace({ pathname: '/pay/return', params: { id: e.id, hint: outcome.response?.status ?? '', ref } });

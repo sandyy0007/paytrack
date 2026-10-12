@@ -1,4 +1,11 @@
-import { formatINR, parseRupeesToPaise, paiseToDecimalString, type Loan } from '@paytrack/shared';
+import {
+  aggregateUdhaarLoans,
+  formatINR,
+  parseRupeesToPaise,
+  paiseToDecimalString,
+  type AggregatedUdhaarPerson,
+  type Loan,
+} from '@paytrack/shared';
 import { router } from 'expo-router';
 import { useState } from 'react';
 import { Keyboard, ScrollView, StyleSheet, Text, View } from 'react-native';
@@ -16,13 +23,15 @@ import { useLiveQuery } from '@/lib/dataVersion';
 import { fmtDate } from '@/lib/format';
 import { createLoan, deleteLoan, getUdhaarSummary, listLoans, recordLoanRepayment, settleLoan } from '@/lib/repo';
 import { scheduleSync } from '@/lib/sync';
-import { colors, elevation, radius, space, type } from '@/theme/tokens';
+import { colors, radius, space, type, useIsLight } from '@/theme/tokens';
 
-type FilterType = 'ALL' | 'LENT' | 'BORROWED' | 'SETTLED';
+type FilterType = 'ALL' | 'RECEIVABLE' | 'PAYABLE' | 'SETTLED';
 
 export default function UdhaarScreen() {
+  const isLight = useIsLight();
   const [filter, setFilter] = useState<FilterType>('ALL');
   const [isAddOpen, setIsAddOpen] = useState(false);
+  const [selectedPerson, setSelectedPerson] = useState<AggregatedUdhaarPerson | null>(null);
   const [repayingLoan, setRepayingLoan] = useState<Loan | null>(null);
   const [deletingLoan, setDeletingLoan] = useState<Loan | null>(null);
 
@@ -48,6 +57,8 @@ export default function UdhaarScreen() {
   });
 
   const allLoans = data.data?.loans ?? [];
+  const aggregatedPersons = aggregateUdhaarLoans(allLoans);
+
   const summary = data.data?.summary ?? {
     totalLentPendingPaise: 0,
     totalBorrowedPendingPaise: 0,
@@ -57,14 +68,19 @@ export default function UdhaarScreen() {
     activeBorrowedCount: 0,
   };
 
-  const filteredLoans = allLoans.filter((l) => {
-    if (filter === 'SETTLED') return l.status === 'SETTLED';
-    if (filter === 'LENT') return l.direction === 'LENT' && l.status !== 'SETTLED';
-    if (filter === 'BORROWED') return l.direction === 'BORROWED' && l.status !== 'SETTLED';
-    return l.status !== 'SETTLED';
+  const netPending = summary.totalLentPendingPaise - summary.totalBorrowedPendingPaise;
+
+  const filteredPersons = aggregatedPersons.filter((p) => {
+    if (filter === 'SETTLED') return !p.hasActive;
+    if (filter === 'RECEIVABLE') return p.netPendingPaise > 0;
+    if (filter === 'PAYABLE') return p.netPendingPaise < 0;
+    return p.hasActive;
   });
 
-  const netPending = summary.totalLentPendingPaise - summary.totalBorrowedPendingPaise;
+  // Keep selectedPerson updated with live state
+  const liveSelectedPerson = selectedPerson
+    ? aggregatedPersons.find((p) => p.identityKey === selectedPerson.identityKey) ?? null
+    : null;
 
   const handleCreateLoan = async () => {
     Keyboard.dismiss();
@@ -140,35 +156,46 @@ export default function UdhaarScreen() {
     }
   };
 
+  const openAddForPerson = (person: AggregatedUdhaarPerson) => {
+    setAddPersonName(person.displayName);
+    setAddPersonContact(person.upiId || person.contact || '');
+    setAddAmount('');
+    setAddDirection('LENT');
+    setAddNotes('');
+    setAddDueDate('');
+    setAddErr(null);
+    setIsAddOpen(true);
+  };
+
   return (
     <Screen
       title="Udhaar"
-      subtitle="Lend & Borrow Tracker"
+      subtitle="Lend & Borrow Manager"
       back={() => (router.canGoBack() ? router.back() : router.replace('/home'))}
-      right={<IconButton icon="add" label="Add Udhaar" onPress={() => setIsAddOpen(true)} color={colors.primary} />}
+      right={<IconButton icon="add" label="Add Record" onPress={() => setIsAddOpen(true)} color={colors.primary} />}
     >
-      {/* Financial Summary Cards */}
-      <View style={{ gap: space.md, marginBottom: space.lg }}>
+      {/* 1. Overall Financial Summary Cards */}
+      <View style={{ gap: space.md, marginBottom: space.md }}>
         <View style={{ flexDirection: 'row', gap: space.md }}>
           <GlassCard padding={space.lg} style={{ flex: 1, borderColor: colors.primary, borderWidth: 1 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.xs, marginBottom: space.xs }}>
               <Icon name="arrow-up-circle-outline" size={18} color={colors.primary} />
-              <Text style={[type.label, { color: colors.primary }]}>Maine Diye</Text>
+              <Text style={[type.label, { color: colors.primary }]}>Total Lent</Text>
             </View>
             <Text style={[type.h2, { color: colors.primary }]}>{formatINR(summary.totalLentPendingPaise)}</Text>
             <Text style={[type.caption, { color: colors.textSecondary, marginTop: 2 }]}>
-              Lena Hai · {summary.activeLentCount} active
+              Receivable · {summary.activeLentCount} active
             </Text>
           </GlassCard>
 
           <GlassCard padding={space.lg} style={{ flex: 1, borderColor: colors.warning, borderWidth: 1 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.xs, marginBottom: space.xs }}>
               <Icon name="arrow-down-circle-outline" size={18} color={colors.warning} />
-              <Text style={[type.label, { color: colors.warning }]}>Maine Liye</Text>
+              <Text style={[type.label, { color: colors.warning }]}>Total Borrowed</Text>
             </View>
             <Text style={[type.h2, { color: colors.warning }]}>{formatINR(summary.totalBorrowedPendingPaise)}</Text>
             <Text style={[type.caption, { color: colors.textSecondary, marginTop: 2 }]}>
-              Dena Hai · {summary.activeBorrowedCount} active
+              Payable · {summary.activeBorrowedCount} active
             </Text>
           </GlassCard>
         </View>
@@ -191,29 +218,29 @@ export default function UdhaarScreen() {
             </View>
             <View style={styles.badgePill}>
               <Text style={[type.caption, { color: colors.textSecondary }]}>
-                {summary.activeLentCount + summary.activeBorrowedCount} Open Records
+                {summary.activeLentCount + summary.activeBorrowedCount} Active Loans
               </Text>
             </View>
           </View>
         </GlassCard>
       </View>
 
-      {/* Filter Tabs */}
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, marginBottom: space.lg }}>
+      {/* 2. Filter Tabs */}
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, marginBottom: space.md }}>
         <FilterChip label="All Active" selected={filter === 'ALL'} onPress={() => setFilter('ALL')} />
-        <FilterChip label="Maine Diye (Lent)" selected={filter === 'LENT'} onPress={() => setFilter('LENT')} />
-        <FilterChip label="Maine Liye (Borrowed)" selected={filter === 'BORROWED'} onPress={() => setFilter('BORROWED')} />
+        <FilterChip label="Receivable (Lent)" selected={filter === 'RECEIVABLE'} onPress={() => setFilter('RECEIVABLE')} />
+        <FilterChip label="Payable (Borrowed)" selected={filter === 'PAYABLE'} onPress={() => setFilter('PAYABLE')} />
         <FilterChip label="Settled" selected={filter === 'SETTLED'} onPress={() => setFilter('SETTLED')} />
       </View>
 
-      {/* Loan Records List */}
+      {/* 3. Aggregated Person List */}
       {!data.data ? (
         <LoadingState rows={3} />
-      ) : filteredLoans.length === 0 ? (
+      ) : filteredPersons.length === 0 ? (
         <GlassCard>
           <EmptyState
             icon="people-outline"
-            title={filter === 'SETTLED' ? 'No settled loans' : 'No Udhaar records'}
+            title={filter === 'SETTLED' ? 'No settled records' : 'No Udhaar records'}
             message="Track money lent to friends or borrowed without affecting your monthly expense budgets."
             cta="+ Record Udhaar"
             onCta={() => setIsAddOpen(true)}
@@ -221,115 +248,80 @@ export default function UdhaarScreen() {
         </GlassCard>
       ) : (
         <View style={{ gap: space.md }}>
-          {filteredLoans.map((loan, idx) => {
-            const isLent = loan.direction === 'LENT';
-            const repaidPct =
-              loan.originalAmountPaise > 0
-                ? Math.min(100, Math.round((loan.repaidAmountPaise / loan.originalAmountPaise) * 100))
-                : 0;
+          {filteredPersons.map((person, idx) => {
+            const isReceivable = person.netPendingPaise > 0;
+            const isPayable = person.netPendingPaise < 0;
 
             return (
-              <Animated.View key={loan.id} entering={FadeInDown.delay(idx * 50).duration(300)}>
-                <GlassCard padding={space.lg}>
-                  {/* Top Row: Person & Direction Badge */}
-                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: space.sm }}>
+              <Animated.View key={person.identityKey} entering={FadeInDown.delay(idx * 40).duration(300)}>
+                <GlassCard
+                  padding={space.lg}
+                  onPress={() => setSelectedPerson(person)}
+                  accessibilityLabel={`${person.displayName}. Tap to view loan details and history`}
+                >
+                  {/* Person Name & Net Status */}
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: space.xs }}>
                     <View style={{ flex: 1 }}>
-                      <Text style={type.h3}>{loan.personName}</Text>
-                      {loan.personContact ? (
-                        <Text style={[type.caption, { color: colors.textMuted }]}>{loan.personContact}</Text>
+                      <Text style={type.h3}>{person.displayName}</Text>
+                      {person.upiId ? (
+                        <Text style={[type.caption, { color: colors.textMuted }]}>{person.upiId}</Text>
+                      ) : person.contact ? (
+                        <Text style={[type.caption, { color: colors.textMuted }]}>{person.contact}</Text>
                       ) : null}
                     </View>
                     <View
                       style={[
                         styles.directionTag,
                         {
-                          backgroundColor: isLent ? 'rgba(20, 184, 166, 0.15)' : 'rgba(245, 158, 11, 0.15)',
-                          borderColor: isLent ? colors.primary : colors.warning,
+                          backgroundColor: isReceivable
+                            ? 'rgba(16, 227, 154, 0.12)'
+                            : isPayable
+                            ? 'rgba(245, 158, 11, 0.12)'
+                            : 'rgba(255, 255, 255, 0.06)',
+                          borderColor: isReceivable ? colors.primary : isPayable ? colors.warning : colors.border,
                         },
                       ]}
                     >
-                      <Text style={[type.caption, { color: isLent ? colors.primary : colors.warning, fontWeight: '700' }]}>
-                        {isLent ? 'Lent (Maine Diye)' : 'Borrowed (Maine Liye)'}
+                      <Text
+                        style={[
+                          type.caption,
+                          {
+                            color: isReceivable ? colors.primary : isPayable ? colors.warning : colors.textMuted,
+                            fontWeight: '700',
+                          },
+                        ]}
+                      >
+                        {isReceivable
+                          ? `Receivable +${formatINR(person.netPendingPaise)}`
+                          : isPayable
+                          ? `Payable -${formatINR(Math.abs(person.netPendingPaise))}`
+                          : 'Settled'}
                       </Text>
                     </View>
                   </View>
 
-                  {/* Amount Breakdown */}
-                  <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: space.xs, marginBottom: space.sm }}>
-                    <Text style={[type.h2, { color: isLent ? colors.primary : colors.warning }]}>
-                      {formatINR(loan.remainingAmountPaise)}
-                    </Text>
-                    <Text style={[type.caption, { color: colors.textMuted }]}>
-                      remaining of {formatINR(loan.originalAmountPaise)}
-                    </Text>
-                  </View>
-
-                  {/* Progress Bar if partially repaid */}
-                  {loan.repaidAmountPaise > 0 ? (
-                    <View style={{ marginBottom: space.sm }}>
-                      <View style={styles.progressTrack}>
-                        <View
-                          style={[
-                            styles.progressBar,
-                            {
-                              width: `${repaidPct}%`,
-                              backgroundColor: isLent ? colors.primary : colors.warning,
-                            },
-                          ]}
-                        />
-                      </View>
-                      <Text style={[type.caption, { color: colors.textSecondary, marginTop: 4 }]}>
-                        {formatINR(loan.repaidAmountPaise)} repaid ({repaidPct}%)
+                  {/* Summary Row */}
+                  <View style={{ flexDirection: 'row', gap: space.lg, marginTop: space.sm }}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={type.caption}>Lent</Text>
+                      <Text style={[type.bodyStrong, { color: colors.primary, marginTop: 1 }]}>
+                        {formatINR(person.totalLentPendingPaise)}
                       </Text>
                     </View>
-                  ) : null}
-
-                  {/* Metadata: Notes / Due Date */}
-                  <View style={{ gap: 2, marginBottom: space.md }}>
-                    {loan.notes ? (
-                      <Text style={[type.caption, { color: colors.textSecondary }]}>Note: {loan.notes}</Text>
-                    ) : null}
-                    {loan.dueDate ? (
-                      <Text style={[type.caption, { color: colors.cyan }]}>Due: {fmtDate(loan.dueDate)}</Text>
-                    ) : null}
-                    <Text style={[type.caption, { color: colors.textMuted }]}>Recorded: {fmtDate(loan.createdAt)}</Text>
-                  </View>
-
-                  {/* Actions Row */}
-                  <View style={{ flexDirection: 'row', gap: space.sm, alignItems: 'center', justifyContent: 'flex-end' }}>
-                    {loan.status !== 'SETTLED' ? (
-                      <>
-                        <SecondaryButton
-                          label="Repay"
-                          size="md"
-                          icon="cash-outline"
-                          onPress={() => {
-                            setRepayingLoan(loan);
-                            setRepayAmount(paiseToDecimalString(loan.remainingAmountPaise).replace(/\.00$/, ''));
-                            setRepayErr(null);
-                          }}
-                        />
-                        <SecondaryButton
-                          label="Settle"
-                          size="md"
-                          variant="ghost"
-                          icon="checkmark-circle-outline"
-                          onPress={() => handleSettle(loan)}
-                        />
-                      </>
-                    ) : (
-                      <View style={styles.settledBadge}>
-                        <Icon name="checkmark-done" size={16} color={colors.success} />
-                        <Text style={[type.caption, { color: colors.success, fontWeight: '700' }]}>Fully Settled</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={type.caption}>Borrowed</Text>
+                      <Text style={[type.bodyStrong, { color: colors.warning, marginTop: 1 }]}>
+                        {formatINR(person.totalBorrowedPendingPaise)}
+                      </Text>
+                    </View>
+                    <View style={{ alignItems: 'flex-end', justifyContent: 'center' }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                        <Text style={[type.caption, { color: colors.textSecondary }]}>
+                          {person.loans.length} record{person.loans.length === 1 ? '' : 's'}
+                        </Text>
+                        <Icon name="chevron-forward" size={14} color={colors.textMuted} />
                       </View>
-                    )}
-                    <IconButton
-                      icon="trash-outline"
-                      label="Delete Udhaar record"
-                      size={18}
-                      color={colors.textMuted}
-                      onPress={() => setDeletingLoan(loan)}
-                    />
+                    </View>
                   </View>
                 </GlassCard>
               </Animated.View>
@@ -338,7 +330,174 @@ export default function UdhaarScreen() {
         </View>
       )}
 
-      {/* Add Udhaar BottomSheet */}
+      {/* 4. Person Detail Sheet */}
+      {liveSelectedPerson && (
+        <BottomSheet
+          visible={!!liveSelectedPerson}
+          onClose={() => setSelectedPerson(null)}
+          title={liveSelectedPerson.displayName}
+          footer={
+            <PrimaryButton
+              label={`+ Add Record for ${liveSelectedPerson.displayName.split(' ')[0]}`}
+              icon="add"
+              onPress={() => {
+                const p = liveSelectedPerson;
+                setSelectedPerson(null);
+                openAddForPerson(p);
+              }}
+              size="lg"
+            />
+          }
+        >
+          <ScrollView
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+            style={{ flexShrink: 1 }}
+            contentContainerStyle={{ gap: space.md, paddingBottom: space.lg }}
+          >
+            {/* Person Net Overview */}
+            <View style={[styles.personHeaderCard, isLight && { backgroundColor: '#F8FAFC', borderColor: '#E2E8F0' }]}>
+              <View style={{ flex: 1 }}>
+                <Text style={[type.caption, isLight && { color: '#64748B' }]}>Net Balance</Text>
+                <Text
+                  style={[
+                    type.h2,
+                    {
+                      color:
+                        liveSelectedPerson.netPendingPaise > 0
+                          ? colors.primary
+                          : liveSelectedPerson.netPendingPaise < 0
+                          ? colors.warning
+                          : (isLight ? '#1A1A1A' : colors.text),
+                      marginTop: 2,
+                    },
+                  ]}
+                >
+                  {liveSelectedPerson.netPendingPaise > 0
+                    ? `+${formatINR(liveSelectedPerson.netPendingPaise)} (Receivable)`
+                    : liveSelectedPerson.netPendingPaise < 0
+                    ? `-${formatINR(Math.abs(liveSelectedPerson.netPendingPaise))} (Payable)`
+                    : '₹0 (Settled)'}
+                </Text>
+              </View>
+              {liveSelectedPerson.upiId ? (
+                <Text style={[type.caption, { color: isLight ? '#64748B' : colors.textMuted }]}>{liveSelectedPerson.upiId}</Text>
+              ) : null}
+            </View>
+
+            {/* Lent vs Borrowed breakdown */}
+            <View style={{ flexDirection: 'row', gap: space.sm }}>
+              <View style={[styles.breakdownCard, isLight && { backgroundColor: '#F8FAFC', borderColor: '#E2E8F0' }]}>
+                <Text style={[type.caption, isLight && { color: '#64748B' }]}>Total Lent</Text>
+                <Text style={[type.h3, { color: colors.primary, marginTop: 2 }]}>
+                  {formatINR(liveSelectedPerson.totalLentPendingPaise)}
+                </Text>
+                <Text style={[type.caption, { color: isLight ? '#64748B' : colors.textMuted }]}>
+                  {formatINR(liveSelectedPerson.totalLentRepaidPaise)} repaid
+                </Text>
+              </View>
+              <View style={[styles.breakdownCard, isLight && { backgroundColor: '#F8FAFC', borderColor: '#E2E8F0' }]}>
+                <Text style={[type.caption, isLight && { color: '#64748B' }]}>Total Borrowed</Text>
+                <Text style={[type.h3, { color: colors.warning, marginTop: 2 }]}>
+                  {formatINR(liveSelectedPerson.totalBorrowedPendingPaise)}
+                </Text>
+                <Text style={[type.caption, { color: isLight ? '#64748B' : colors.textMuted }]}>
+                  {formatINR(liveSelectedPerson.totalBorrowedRepaidPaise)} repaid
+                </Text>
+              </View>
+            </View>
+
+            <Text style={[type.label, isLight && { color: '#475569' }, { marginTop: space.xs }]}>Transaction History</Text>
+
+            {/* Individual Transactions for this person */}
+            <View style={{ gap: space.sm }}>
+              {liveSelectedPerson.loans.map((loan) => {
+                const isLent = loan.direction === 'LENT';
+                const isSettled = loan.status === 'SETTLED';
+
+                return (
+                  <View key={loan.id} style={[styles.loanRowCard, isLight && { backgroundColor: '#F8FAFC', borderColor: '#E2E8F0' }]}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.xs }}>
+                        <Icon
+                          name={isLent ? 'arrow-up-circle-outline' : 'arrow-down-circle-outline'}
+                          size={18}
+                          color={isLent ? colors.primary : colors.warning}
+                        />
+                        <Text style={[type.bodyStrong, { color: isLent ? colors.primary : colors.warning }]}>
+                          {isLent ? 'Lent' : 'Borrowed'}
+                        </Text>
+                      </View>
+                      <Text style={[type.caption, { color: colors.textMuted }]}>{fmtDate(loan.createdAt)}</Text>
+                    </View>
+
+                    <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: space.xs, marginTop: 4 }}>
+                      <Text style={[type.h3, { color: isLent ? colors.primary : colors.warning }]}>
+                        {formatINR(loan.remainingAmountPaise)}
+                      </Text>
+                      {loan.repaidAmountPaise > 0 ? (
+                        <Text style={[type.caption, { color: colors.textMuted }]}>
+                          (of {formatINR(loan.originalAmountPaise)})
+                        </Text>
+                      ) : null}
+                    </View>
+
+                    {loan.notes ? (
+                      <Text style={[type.caption, { color: colors.textSecondary, marginTop: 2 }]}>
+                        Note: {loan.notes}
+                      </Text>
+                    ) : null}
+                    {loan.dueDate ? (
+                      <Text style={[type.caption, { color: colors.cyan, marginTop: 1 }]}>
+                        Due: {fmtDate(loan.dueDate)}
+                      </Text>
+                    ) : null}
+
+                    {/* Actions for this individual loan */}
+                    <View style={{ flexDirection: 'row', gap: space.xs, justifyContent: 'flex-end', marginTop: space.sm }}>
+                      {!isSettled ? (
+                        <>
+                          <SecondaryButton
+                            label="Repay"
+                            size="md"
+                            icon="cash-outline"
+                            onPress={() => {
+                              setRepayingLoan(loan);
+                              setRepayAmount(paiseToDecimalString(loan.remainingAmountPaise).replace(/\.00$/, ''));
+                              setRepayErr(null);
+                            }}
+                          />
+                          <SecondaryButton
+                            label="Settle"
+                            size="md"
+                            variant="ghost"
+                            icon="checkmark-circle-outline"
+                            onPress={() => handleSettle(loan)}
+                          />
+                        </>
+                      ) : (
+                        <View style={styles.settledBadge}>
+                          <Icon name="checkmark-done" size={14} color={colors.success} />
+                          <Text style={[type.caption, { color: colors.success, fontWeight: '700' }]}>Settled</Text>
+                        </View>
+                      )}
+                      <IconButton
+                        icon="trash-outline"
+                        label="Delete"
+                        size={18}
+                        color={colors.textMuted}
+                        onPress={() => setDeletingLoan(loan)}
+                      />
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
+          </ScrollView>
+        </BottomSheet>
+      )}
+
+      {/* 5. Add Record BottomSheet */}
       {isAddOpen && (
         <BottomSheet
           visible={isAddOpen}
@@ -370,12 +529,12 @@ export default function UdhaarScreen() {
               <Text style={type.label}>Type</Text>
               <View style={{ flexDirection: 'row', gap: space.sm }}>
                 <FilterChip
-                  label="Maine Diye (Lent / Lena Hai)"
+                  label="Lent (Money Given)"
                   selected={addDirection === 'LENT'}
                   onPress={() => setAddDirection('LENT')}
                 />
                 <FilterChip
-                  label="Maine Liye (Borrowed / Dena Hai)"
+                  label="Borrowed (Money Taken)"
                   selected={addDirection === 'BORROWED'}
                   onPress={() => setAddDirection('BORROWED')}
                 />
@@ -404,11 +563,11 @@ export default function UdhaarScreen() {
             />
 
             <TextField
-              label="Phone / Contact (Optional)"
+              label="UPI ID or Phone (Optional)"
               value={addPersonContact}
               onChangeText={setAddPersonContact}
-              keyboardType="phone-pad"
-              placeholder="e.g. 9876543210"
+              placeholder="e.g. rahul@upi or 9876543210"
+              hint="UPI IDs are automatically recognized for matching"
             />
 
             <TextField
@@ -423,13 +582,13 @@ export default function UdhaarScreen() {
               label="Reason / Notes (Optional)"
               value={addNotes}
               onChangeText={setAddNotes}
-              placeholder="e.g. Dinner split, emergency help"
+              placeholder="e.g. Dinner split, fuel assistance"
             />
           </ScrollView>
         </BottomSheet>
       )}
 
-      {/* Repay BottomSheet */}
+      {/* 6. Repay BottomSheet */}
       {repayingLoan && (
         <BottomSheet
           visible={!!repayingLoan}
@@ -457,8 +616,8 @@ export default function UdhaarScreen() {
             style={{ flexShrink: 1 }}
             contentContainerStyle={{ gap: space.lg, paddingBottom: space.lg }}
           >
-            <View style={styles.repaySummaryCard}>
-              <Text style={type.caption}>Total Remaining</Text>
+            <View style={[styles.repaySummaryCard, isLight && { backgroundColor: '#F8FAFC', borderColor: '#E2E8F0' }]}>
+              <Text style={[type.caption, isLight && { color: '#64748B' }]}>Total Remaining</Text>
               <Text style={[type.h2, { color: colors.primary, marginTop: 2 }]}>
                 {formatINR(repayingLoan.remainingAmountPaise)}
               </Text>
@@ -492,13 +651,13 @@ export default function UdhaarScreen() {
               label="Note (Optional)"
               value={repayNotes}
               onChangeText={setRepayNotes}
-              placeholder="e.g. GPay transfer, Cash received"
+              placeholder="e.g. UPI transfer, Cash received"
             />
           </ScrollView>
         </BottomSheet>
       )}
 
-      {/* Delete Confirmation Dialog */}
+      {/* 7. Delete Confirmation Dialog */}
       <ConfirmDialog
         visible={!!deletingLoan}
         title="Delete Udhaar Record?"
@@ -525,16 +684,6 @@ const styles = StyleSheet.create({
     borderRadius: radius.sm,
     borderWidth: 1,
   },
-  progressTrack: {
-    height: 6,
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
-    borderRadius: 3,
-    overflow: 'hidden',
-  },
-  progressBar: {
-    height: '100%',
-    borderRadius: 3,
-  },
   settledBadge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -543,6 +692,28 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.md,
     backgroundColor: 'rgba(16, 185, 129, 0.1)',
     borderRadius: radius.md,
+  },
+  personHeaderCard: {
+    padding: space.lg,
+    borderRadius: radius.lg,
+    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  breakdownCard: {
+    flex: 1,
+    padding: space.md,
+    borderRadius: radius.md,
+    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  loanRowCard: {
+    padding: space.md,
+    borderRadius: radius.md,
+    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   repaySummaryCard: {
     padding: space.md,

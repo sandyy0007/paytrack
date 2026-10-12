@@ -2,6 +2,7 @@ import { router } from 'expo-router';
 import type { ReactNode } from 'react';
 import { KeyboardAvoidingView, Platform, RefreshControl, ScrollView, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSettings } from '@/lib/settings';
 import { colors, space, type } from '@/theme/tokens';
 import { AmbientBackground } from './AmbientBackground';
 import { IconButton } from './Buttons';
@@ -24,6 +25,8 @@ interface ScreenProps {
 /** Safe-area aware page shell with ambient background, header and optional sticky footer. */
 export function Screen({ children, scroll = true, title, subtitle, back, right, footer, contentStyle, refreshing, onRefresh, bottomInset = 0, keyboard }: ScreenProps) {
   const insets = useSafeAreaInsets();
+  const themeMode = useSettings((s) => s.themeMode);
+  const isLight = themeMode === 'light';
   const header = (title || back || right) && (
     <View style={[styles.header, { paddingTop: insets.top + space.sm }]}>
       {back ? (
@@ -59,7 +62,7 @@ export function Screen({ children, scroll = true, title, subtitle, back, right, 
     </>
   );
   return (
-    <View style={styles.root}>
+    <View style={[styles.root, isLight ? { backgroundColor: '#F8FAFC' } : { backgroundColor: '#05070A' }]}>
       <AmbientBackground />
       {keyboard ? (
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>{inner}</KeyboardAvoidingView>

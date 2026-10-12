@@ -19,7 +19,7 @@ export const AmbientBackground = memo(function AmbientBackground({ intensity = 1
   const isLight = themeMode === 'light';
   const isCustom = themeMode === 'custom' && !!customWallpaperUri;
 
-  const bgColor = isLight ? '#0B0F19' : colors.bg;
+  const bgColor = isLight ? '#F8FAFC' : colors.bg;
 
   return (
     <View style={[StyleSheet.absoluteFill, { backgroundColor: bgColor }]} pointerEvents="none">
@@ -59,15 +59,15 @@ export const AmbientBackground = memo(function AmbientBackground({ intensity = 1
       <Svg width={width} height={height} style={StyleSheet.absoluteFill}>
         <Defs>
           <RadialGradient id="a" cx="15%" cy="8%" rx="75%" ry="45%">
-            <Stop offset="0" stopColor={colors.primary} stopOpacity={(isLight ? 0.12 : 0.16) * intensity} />
+            <Stop offset="0" stopColor={colors.primary} stopOpacity={(isLight ? 0.05 : 0.16) * intensity} />
             <Stop offset="1" stopColor={colors.primary} stopOpacity={0} />
           </RadialGradient>
           <RadialGradient id="b" cx="100%" cy="42%" rx="70%" ry="40%">
-            <Stop offset="0" stopColor={colors.cyan} stopOpacity={(isLight ? 0.08 : 0.09) * intensity} />
+            <Stop offset="0" stopColor={colors.cyan} stopOpacity={(isLight ? 0.04 : 0.09) * intensity} />
             <Stop offset="1" stopColor={colors.cyan} stopOpacity={0} />
           </RadialGradient>
           <RadialGradient id="c" cx="30%" cy="105%" rx="80%" ry="35%">
-            <Stop offset="0" stopColor={colors.blue} stopOpacity={(isLight ? 0.06 : 0.07) * intensity} />
+            <Stop offset="0" stopColor={colors.blue} stopOpacity={(isLight ? 0.03 : 0.07) * intensity} />
             <Stop offset="1" stopColor={colors.blue} stopOpacity={0} />
           </RadialGradient>
         </Defs>

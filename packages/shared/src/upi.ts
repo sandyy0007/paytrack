@@ -525,3 +525,51 @@ export const KNOWN_UPI_APPS: readonly { id: string; name: string; packageName: s
   { id: 'amazonpay', name: 'Amazon Pay', packageName: 'in.amazon.mShop.android.shopping' },
   { id: 'cred', name: 'CRED', packageName: 'com.dreamplug.androidapp' },
 ];
+
+export interface LaunchUriOptions {
+  rawQrPayload?: string | null;
+  qrSource?: string | null;
+  amountPaise: number;
+  reason?: string | null;
+  shareNote?: boolean;
+}
+
+/**
+ * Builds or preserves the exact URI to pass to external UPI apps.
+ * Strictly adheres to the zero-alteration rule:
+ * - When payment originates from a scanned QR (Camera or Gallery) and the raw QR payload is available:
+ *   - If raw QR has am= (fixed amount) or sign= (cryptographically signed merchant): returns raw UNTOUCHED (zero alteration).
+ *   - If raw QR lacks am=: appends &am=X.XX&cu=INR (and optional sanitized &tn= if shareNote) without re-encoding existing parameters.
+ * - Otherwise (manual entry or no raw payload): constructs using buildUpiPaymentUri(payload, options).
+ */
+export function getZeroAlterationUpiLaunchUri(
+  payload: UpiPayload | null,
+  options: LaunchUriOptions,
+): string {
+  const { rawQrPayload, qrSource, amountPaise, reason, shareNote } = options;
+  if (qrSource !== 'MANUAL_UPI' && rawQrPayload && rawQrPayload.trim().toLowerCase().startsWith('upi:')) {
+    const raw = rawQrPayload.trim();
+    if (/[?&]am=/i.test(raw)) {
+      return raw;
+    }
+    if (/[?&]sign=/i.test(raw)) {
+      return raw;
+    }
+    const amountStr = (amountPaise / 100).toFixed(2);
+    const separator = raw.includes('?') ? '&' : '?';
+    let uri = `${raw}${separator}am=${amountStr}`;
+    if (!/[?&]cu=/i.test(raw)) {
+      uri += '&cu=INR';
+    }
+    const trimmedReason = reason ? reason.trim() : '';
+    if (shareNote && trimmedReason && !/[?&]tn=/i.test(raw)) {
+      uri += `&tn=${encodeURIComponent(trimmedReason)}`;
+    }
+    return uri;
+  }
+
+  if (!payload) throw new Error('Payment details are missing for this expense.');
+  const trimmedReason = reason ? reason.trim() : '';
+  const note = (shareNote && trimmedReason) ? trimmedReason : undefined;
+  return buildUpiPaymentUri(payload, { amountPaise, note });
+}

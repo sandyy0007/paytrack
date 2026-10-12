@@ -13,8 +13,9 @@ import { useLiveQuery } from '@/lib/dataVersion';
 import { haptic } from '@/lib/haptics';
 import { ensurePermission } from '@/lib/notifications';
 import { getBudget, listCategories, upsertBudget } from '@/lib/repo';
+import { useSettings } from '@/lib/settings';
 import { scheduleSync } from '@/lib/sync';
-import { colors, radius, space, type } from '@/theme/tokens';
+import { colors, radius, space, type, useIsLight } from '@/theme/tokens';
 
 const ALL = '__ALL__';
 
@@ -44,6 +45,7 @@ function getBudgetPeriodDates(p: BudgetPeriod) {
 
 export default function CreateBudgetScreen() {
   const insets = useSafeAreaInsets();
+  const isLight = useIsLight();
   const params = useLocalSearchParams<{ id?: string }>();
   const cats = useLiveQuery(() => listCategories());
 
@@ -105,17 +107,17 @@ export default function CreateBudgetScreen() {
   const periodInfo = getBudgetPeriodDates(period);
 
   return (
-    <View style={styles.root}>
+    <View style={[styles.root, isLight && { backgroundColor: '#F8FAFC' }]}>
       <AmbientBackground />
       <SafeAreaView style={styles.safeArea}>
         {/* Header: < Back        Create Budget */}
-        <View style={styles.header}>
+        <View style={[styles.header, isLight && { borderBottomColor: '#E2E8F0' }]}>
           <IconButton
             icon="arrow-back"
             label="Back"
             onPress={() => (router.canGoBack() ? router.back() : router.replace('/(tabs)/budgets'))}
           />
-          <Text style={type.h2} accessibilityRole="header">
+          <Text style={[type.h2, isLight && { color: '#1A1A1A' }]} accessibilityRole="header">
             {budget ? 'Edit Budget' : 'Create Budget'}
           </Text>
           <View style={{ width: 44 }} />
@@ -133,7 +135,7 @@ export default function CreateBudgetScreen() {
         >
           {/* Category */}
           <View style={styles.fieldSection}>
-            <Text style={type.label}>Category</Text>
+            <Text style={[type.label, isLight && { color: '#475569' }]}>Category</Text>
             <View style={styles.chipsWrap}>
               <CategoryChip
                 compact
@@ -168,7 +170,7 @@ export default function CreateBudgetScreen() {
 
           {/* Budget Period */}
           <View style={styles.fieldSection}>
-            <Text style={type.label}>Budget Period</Text>
+            <Text style={[type.label, isLight && { color: '#475569' }]}>Budget Period</Text>
             <View style={styles.periodRow}>
               <FilterChip
                 label="Monthly"
@@ -193,28 +195,28 @@ export default function CreateBudgetScreen() {
           />
 
           {/* Calculated Period Coverage / Dates */}
-          <View style={styles.periodCard}>
-            <Text style={[type.caption, { color: colors.textSecondary }]}>Calculated Period Coverage</Text>
+          <View style={[styles.periodCard, isLight && { backgroundColor: '#FFFFFF', borderColor: '#E2E8F0' }]}>
+            <Text style={[type.caption, { color: isLight ? '#475569' : colors.textSecondary }]}>Calculated Period Coverage</Text>
             <View style={styles.dateRow}>
               <View style={styles.dateCol}>
-                <Text style={type.caption}>Start Date</Text>
+                <Text style={[type.caption, isLight && { color: '#64748B' }]}>Start Date</Text>
                 <View style={styles.dateBox}>
                   <Icon name="calendar-outline" size={15} color={colors.primary} />
-                  <Text style={[type.bodyStrong, { fontSize: 13.5 }]}>{periodInfo.startStr}</Text>
+                  <Text style={[type.bodyStrong, { fontSize: 13.5 }, isLight && { color: '#1A1A1A' }]}>{periodInfo.startStr}</Text>
                 </View>
               </View>
               <View style={{ marginTop: 18 }}>
-                <Icon name="arrow-forward" size={16} color={colors.textMuted} />
+                <Icon name="arrow-forward" size={16} color={isLight ? '#94A3B8' : colors.textMuted} />
               </View>
               <View style={styles.dateCol}>
-                <Text style={type.caption}>End Date</Text>
+                <Text style={[type.caption, isLight && { color: '#64748B' }]}>End Date</Text>
                 <View style={styles.dateBox}>
                   <Icon name="calendar-outline" size={15} color={colors.primary} />
-                  <Text style={[type.bodyStrong, { fontSize: 13.5 }]}>{periodInfo.endStr}</Text>
+                  <Text style={[type.bodyStrong, { fontSize: 13.5 }, isLight && { color: '#1A1A1A' }]}>{periodInfo.endStr}</Text>
                 </View>
               </View>
             </View>
-            <View style={styles.cycleBadge}>
+            <View style={[styles.cycleBadge, isLight && { borderTopColor: '#F1F5F9' }]}>
               <Icon name="sync-outline" size={13} color={colors.primary} />
               <Text style={[type.caption, { color: colors.primary, fontSize: 12 }]}>{periodInfo.cycleDesc}</Text>
             </View>

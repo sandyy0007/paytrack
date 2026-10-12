@@ -17,7 +17,7 @@ import { useSession, type User } from '@/lib/session';
 import { useSettings } from '@/lib/settings';
 import { syncNow, useSyncState } from '@/lib/sync';
 import { appNameForPackage } from '@/lib/upiLaunch';
-import { colors, space, type } from '@/theme/tokens';
+import { colors, space, type, useIsLight } from '@/theme/tokens';
 
 function EditProfile({ visible, onClose }: { visible: boolean; onClose: () => void }) {
   const { session, updateUser } = useSession();
@@ -57,6 +57,7 @@ function EditProfile({ visible, onClose }: { visible: boolean; onClose: () => vo
 
 export default function Profile() {
   const { session, expired } = useSession();
+  const isLight = useIsLight();
   const settings = useSettings();
   const sync = useSyncState();
   const [editing, setEditing] = useState(false);
@@ -67,7 +68,7 @@ export default function Profile() {
 
   return (
     <Screen bottomInset={TAB_CONTENT_INSET}>
-      <Text style={type.h1} accessibilityRole="header">Profile</Text>
+      <Text style={[type.h1, isLight && { color: '#1A1A1A' }]} accessibilityRole="header">Profile</Text>
       <GlassCard variant="hero" padding={space.xl} onPress={() => setEditing(true)} accessibilityLabel="Edit profile">
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.lg }}>
           <Avatar name={name} size={60} />
@@ -92,31 +93,27 @@ export default function Profile() {
       </SettingsGroup>
 
       <SettingsGroup title="Preferences">
-        <SettingsRow icon="color-palette-outline" label="Appearance & Theme" value={settings.themeMode.toUpperCase()} onPress={() => router.push('/profile/settings')} />
-        <SettingsRow icon="pricetag-outline" label="Default category" value={settings.defaultCategory ?? 'None'} onPress={() => router.push('/profile/settings')} />
-        <SettingsRow icon="phone-portrait-outline" label="UPI app" value={appNameForPackage(settings.preferredUpiPackage) ?? 'Ask every time'} onPress={() => router.push('/profile/settings')} />
-        <SettingsRow icon="wallet-outline" label="Budget settings" onPress={() => router.push('/budgets')} />
-        <SettingsRow icon="notifications-outline" label="Notification settings" onPress={() => router.push('/profile/settings')} />
+        <SettingsRow icon="color-palette-outline" label="Appearance & Theme" value={settings.themeMode.toUpperCase()} onPress={() => router.push('/settings/appearance')} />
+        <SettingsRow icon="card-outline" label="Payment Preferences" value={appNameForPackage(settings.preferredUpiPackage) ?? 'Ask every time'} onPress={() => router.push('/settings/payments')} />
+        <SettingsRow icon="wallet-outline" label="Budget Settings" onPress={() => router.push('/budgets')} />
+        <SettingsRow icon="notifications-outline" label="Notification Settings" onPress={() => router.push('/settings/notifications')} />
       </SettingsGroup>
 
-      <SettingsGroup title="Data & safety">
+      <SettingsGroup title="Data & Safety">
         <SettingsRow icon="lock-closed-outline" label="Security & App Lock" value={settings.appLockEnabled ? 'PIN Protected' : 'None'} onPress={() => router.push('/profile/security')} />
         <SettingsRow icon="eye-off-outline" label="Privacy" onPress={() => router.push('/profile/privacy')} />
         <SettingsRow icon="download-outline" label="Export & Backup" value="CSV · PDF · JSON" onPress={() => router.push('/profile/export')} />
       </SettingsGroup>
 
       <SettingsGroup title="About & App Info">
-        <SettingsRow icon="information-circle-outline" label="App Version" value="1.0.5 (Latest Build)" />
-        <SettingsRow icon="code-slash-outline" label="Build Identifier" value="20261004-V6-FINAL" />
-        <SettingsRow icon="server-outline" label="Schema Status" value="v6 (Merchant Flow Reconciled)" />
-        <SettingsRow icon="bug-outline" label="Diagnostics" value="Open" onPress={() => router.push('/pay/debug')} />
+        <SettingsRow icon="information-circle-outline" label="About PayTrack" value="v1.0.7" onPress={() => router.push('/settings/about')} />
       </SettingsGroup>
 
       <SettingsGroup>
         <SettingsRow icon="trash-outline" label="Delete account" danger onPress={() => router.push('/profile/security')} />
         <SettingsRow icon="log-out-outline" label={remote ? 'Logout' : 'Reset local profile'} danger onPress={() => setConfirmLogout(true)} />
       </SettingsGroup>
-      <Text style={[type.caption, { textAlign: 'center', color: colors.textMuted }]}>PayTrack 1.0.5 (20261004-V6-FINAL) · Pay First. Track Automatically.</Text>
+      <Text style={[type.caption, { textAlign: 'center', color: colors.textMuted }]}>PayTrack 1.0.7 (Build 8) · Pay First. Track Automatically.</Text>
 
       <EditProfile key={String(editing)} visible={editing} onClose={() => setEditing(false)} />
       <ConfirmDialog

@@ -18,7 +18,7 @@ import { dayHeader, fmtDayMonth, startOfDay, startOfMonth, startOfWeek } from '@
 import { haptic } from '@/lib/haptics';
 import { deleteExpense, listExpenses, type BucketFilter, type LocalExpense, type RangeFilter } from '@/lib/repo';
 import { scheduleSync, syncNow } from '@/lib/sync';
-import { colors, fonts, radius, space, type } from '@/theme/tokens';
+import { colors, fonts, radius, space, type, useIsLight } from '@/theme/tokens';
 
 const BUCKETS: { key: BucketFilter; label: string }[] = [
   { key: 'ALL', label: 'All' }, { key: 'PAID', label: 'Paid' }, { key: 'PENDING', label: 'Pending' },
@@ -32,6 +32,7 @@ const PAGE = 40;
 
 export default function Activity() {
   const insets = useSafeAreaInsets();
+  const isLight = useIsLight();
   const params = useLocalSearchParams<{ bucket?: BucketFilter; q?: string }>();
   const [bucket, setBucket] = useState<BucketFilter>(params.bucket ?? 'ALL');
   const [range, setRange] = useState<RangeFilter>('ALL');

@@ -4,7 +4,7 @@ import { formatINR, type SplitData, type SplitShare } from '@paytrack/shared';
 import { PrimaryButton, SecondaryButton } from '@/components/Buttons';
 import { Icon } from '@/components/Icon';
 import { ScalePressable } from '@/components/ScalePressable';
-import { colors, radius, space, type } from '@/theme/tokens';
+import { colors, radius, space, type, useIsLight } from '@/theme/tokens';
 import { uuid } from '@/lib/ids';
 
 interface SplitExpenseModalProps {
@@ -16,6 +16,7 @@ interface SplitExpenseModalProps {
 }
 
 export function SplitExpenseModal({ visible, totalAmountPaise, currentSplit, onClose, onSave }: SplitExpenseModalProps) {
+  const isLight = useIsLight();
   const [numPeople, setNumPeople] = useState<number>(currentSplit ? currentSplit.totalShares : 2);
   const [shares, setShares] = useState<SplitShare[]>(() => {
     if (currentSplit?.shares && currentSplit.shares.length > 0) {

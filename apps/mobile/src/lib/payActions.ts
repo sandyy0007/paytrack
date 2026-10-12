@@ -1,6 +1,25 @@
-import { buildUpiPaymentUri, parseUpiQr, type UpiPayload } from '@paytrack/shared';
+import { buildUpiPaymentUri, getZeroAlterationUpiLaunchUri, parseUpiQr, type UpiPayload } from '@paytrack/shared';
 import { getExpense, transition, type LocalExpense } from './repo';
 import { scheduleSync } from './sync';
+
+/** Extracts the raw QR payload from an expense if available. */
+export function extractRawQrPayload(e: LocalExpense): string | null {
+  if (e.rawQrPayload && typeof e.rawQrPayload === 'string' && e.rawQrPayload.trim().toLowerCase().startsWith('upi:')) {
+    return e.rawQrPayload.trim();
+  }
+  if (!e.qrPayload) return null;
+  const trimmed = typeof e.qrPayload === 'string' ? e.qrPayload.trim() : '';
+  if (trimmed.toLowerCase().startsWith('upi:')) return trimmed;
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (parsed && typeof parsed === 'object' && typeof parsed.raw === 'string' && parsed.raw.trim().toLowerCase().startsWith('upi:')) {
+      return parsed.raw.trim();
+    }
+  } catch {
+    /* fallback */
+  }
+  return null;
+}
 
 /** Rebuilds the parsed QR payload stored with the expense (needed for retries and launches). */
 export function payloadFromExpense(e: LocalExpense): UpiPayload | null {
@@ -46,12 +65,29 @@ export function payloadFromExpense(e: LocalExpense): UpiPayload | null {
   return null;
 }
 
+/**
+ * QR Zero-Alteration Launch URI:
+ * When payment originates from a scanned QR (Camera or Gallery),
+ * the URI passed to the external UPI app MUST be the original QR payload with ZERO alterations.
+ *
+ * - Signed or fixed-amount QRs: passed 100% byte-for-byte identical.
+ * - Dynamic-amount QRs (no am= parameter): append '&am=' + amount + '&cu=INR' without altering existing parameters.
+ * - Manual UPI entry (MANUAL_UPI or no raw QR): reconstruct using buildUpiPaymentUri().
+ */
+export function getLaunchUri(expense: LocalExpense, shareNote: boolean): string {
+  const raw = extractRawQrPayload(expense);
+  const p = payloadFromExpense(expense);
+  return getZeroAlterationUpiLaunchUri(p, {
+    rawQrPayload: raw,
+    qrSource: expense.qrSource,
+    amountPaise: expense.amountPaise,
+    reason: expense.reason,
+    shareNote,
+  });
+}
+
 export function buildUriForExpense(e: LocalExpense, shareNote: boolean): string {
-  const p = payloadFromExpense(e);
-  if (!p) throw new Error('Payment details are missing for this expense.');
-  const trimmedReason = e.reason ? e.reason.trim() : '';
-  const note = (shareNote && trimmedReason) ? trimmedReason : undefined;
-  return buildUpiPaymentUri(p, { amountPaise: e.amountPaise, note });
+  return getLaunchUri(e, shareNote);
 }
 
 /** Ensures the expense reached USER_RETURNED before the user's answer is recorded. */

@@ -3,8 +3,9 @@
  * radii, elevation and motion. Screens must not hard-code colours.
  */
 import { Platform, type TextStyle, type ViewStyle } from 'react-native';
+import { useSettings } from '@/lib/settings';
 
-export const colors = {
+const baseDarkColors = {
   bg: '#05070A',
   bgElevated: '#0A0E13',
   bgDeep: '#020304',
@@ -39,6 +40,71 @@ export const colors = {
   textInverse: '#05070A',
 } as const;
 
+export type ColorPalette = Record<keyof typeof baseDarkColors, string>;
+
+export const baseLightColors: ColorPalette = {
+  bg: '#F8FAFC',
+  bgElevated: '#FFFFFF',
+  bgDeep: '#F1F5F9',
+  surface: 'rgba(15, 23, 42, 0.04)',
+  surfaceStrong: 'rgba(15, 23, 42, 0.07)',
+  surfacePressed: 'rgba(15, 23, 42, 0.12)',
+  border: '#E2E8F0',
+  borderStrong: '#CBD5E1',
+  highlight: 'rgba(255, 255, 255, 0.60)',
+
+  primary: '#059669',
+  primaryDeep: '#047857',
+  primarySoft: 'rgba(5, 150, 105, 0.12)',
+  primaryGlow: 'rgba(5, 150, 105, 0.25)',
+  onPrimary: '#FFFFFF',
+
+  cyan: '#0284C7',
+  cyanSoft: 'rgba(2, 132, 199, 0.12)',
+  blue: '#2563EB',
+
+  success: '#10B981',
+  successSoft: 'rgba(16, 185, 129, 0.12)',
+  warning: '#D97706',
+  warningSoft: 'rgba(217, 119, 6, 0.12)',
+  error: '#DC2626',
+  errorSoft: 'rgba(220, 38, 38, 0.12)',
+  neutralSoft: 'rgba(100, 116, 139, 0.12)',
+
+  text: '#0F172A',
+  textSecondary: '#475569',
+  textMuted: '#64748B',
+  textInverse: '#F8FAFC',
+};
+
+export function getThemeColors(mode?: string): ColorPalette {
+  const currentMode = mode ?? useSettings.getState()?.themeMode ?? 'dark';
+  return currentMode === 'light' ? baseLightColors : (baseDarkColors as unknown as ColorPalette);
+}
+
+export function useThemeColors(): ColorPalette {
+  const mode = useSettings((s) => s.themeMode);
+  return mode === 'light' ? baseLightColors : (baseDarkColors as unknown as ColorPalette);
+}
+
+export function useIsLight(): boolean {
+  return useSettings((s) => s.themeMode) === 'light';
+}
+
+export const colors: ColorPalette = new Proxy(baseDarkColors, {
+  get(target, prop: keyof typeof baseDarkColors) {
+    try {
+      const mode = useSettings.getState()?.themeMode;
+      if (mode === 'light' && prop in baseLightColors) {
+        return baseLightColors[prop];
+      }
+    } catch {
+      // safe fallback
+    }
+    return target[prop];
+  },
+});
+
 export const gradients = {
   primary: ['#34F5B4', '#10E39A', '#0BB57A'] as const,
   heroCard: ['rgba(16,227,154,0.22)', 'rgba(34,211,238,0.10)', 'rgba(255,255,255,0.03)'] as const,
@@ -64,18 +130,18 @@ const t = (fontFamily: string, fontSize: number, lineHeight: number, extra: Text
 });
 
 export const type = {
-  display: t(fonts.extrabold, 44, 52, { letterSpacing: -1.2, fontVariant: ['tabular-nums'] }),
-  amountXL: t(fonts.extrabold, 56, 64, { letterSpacing: -1.5, fontVariant: ['tabular-nums'] }),
-  h1: t(fonts.bold, 28, 34, { letterSpacing: -0.6 }),
-  h2: t(fonts.bold, 22, 28, { letterSpacing: -0.3 }),
-  h3: t(fonts.semibold, 17, 22),
-  body: t(fonts.regular, 15, 22),
-  bodyStrong: t(fonts.semibold, 15, 22),
-  label: t(fonts.medium, 13, 18, { color: colors.textSecondary }),
-  caption: t(fonts.medium, 12, 16, { color: colors.textMuted }),
-  overline: t(fonts.semibold, 11, 14, { color: colors.textMuted, letterSpacing: 1.2, textTransform: 'uppercase' }),
-  money: t(fonts.bold, 17, 22, { fontVariant: ['tabular-nums'] }),
-  mono: t(Platform.select({ android: 'monospace', ios: 'Menlo', default: 'ui-monospace, Menlo, Consolas, monospace' })!, 14, 20, { letterSpacing: 0.5 }),
+  get display() { return t(fonts.extrabold, 44, 52, { letterSpacing: -1.2, fontVariant: ['tabular-nums'] }); },
+  get amountXL() { return t(fonts.extrabold, 56, 64, { letterSpacing: -1.5, fontVariant: ['tabular-nums'] }); },
+  get h1() { return t(fonts.bold, 28, 34, { letterSpacing: -0.6 }); },
+  get h2() { return t(fonts.bold, 22, 28, { letterSpacing: -0.3 }); },
+  get h3() { return t(fonts.semibold, 17, 22); },
+  get body() { return t(fonts.regular, 15, 22); },
+  get bodyStrong() { return t(fonts.semibold, 15, 22); },
+  get label() { return t(fonts.medium, 13, 18, { color: colors.textSecondary }); },
+  get caption() { return t(fonts.medium, 12, 16, { color: colors.textMuted }); },
+  get overline() { return t(fonts.semibold, 11, 14, { color: colors.textMuted, letterSpacing: 1.2, textTransform: 'uppercase' }); },
+  get money() { return t(fonts.bold, 17, 22, { fontVariant: ['tabular-nums'] }); },
+  get mono() { return t(Platform.select({ android: 'monospace', ios: 'Menlo', default: 'ui-monospace, Menlo, Consolas, monospace' })!, 14, 20, { letterSpacing: 0.5 }); },
 };
 
 /** Soft layered depth. Android uses elevation + tinted shadow colour. */
@@ -100,6 +166,13 @@ export const elevation = {
     shadowOpacity: 0.55,
     shadowRadius: 22,
     elevation: 12,
+  } satisfies ViewStyle,
+  low: {
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    elevation: 2,
   } satisfies ViewStyle,
 };
 

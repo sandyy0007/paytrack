@@ -1,5 +1,5 @@
 import { StyleSheet, Text, View } from 'react-native';
-import { colors, fonts, radius, space } from '@/theme/tokens';
+import { colors, fonts, radius, space, useIsLight } from '@/theme/tokens';
 import { Icon } from './Icon';
 import { ScalePressable } from './ScalePressable';
 
@@ -17,6 +17,8 @@ export function applyKey(cur: string, key: string): string {
 }
 
 export function Keypad({ onKey }: { onKey: (k: string) => void }) {
+  const isLight = useIsLight();
+
   return (
     <View style={styles.grid}>
       {KEYS.map((k) => (
@@ -28,9 +30,16 @@ export function Keypad({ onKey }: { onKey: (k: string) => void }) {
           scaleTo={0.92}
           accessibilityRole="keyboardkey"
           accessibilityLabel={k === 'del' ? 'Delete' : k === '.' ? 'Decimal point' : k}
-          style={styles.key}
+          style={[
+            styles.key,
+            isLight && { backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E2E8F0' },
+          ]}
         >
-          {k === 'del' ? <Icon name="backspace-outline" size={24} color={colors.text} /> : <Text style={styles.keyText}>{k}</Text>}
+          {k === 'del' ? (
+            <Icon name="backspace-outline" size={24} color={isLight ? '#1A1A1A' : colors.text} />
+          ) : (
+            <Text style={[styles.keyText, isLight && { color: '#1A1A1A' }]}>{k}</Text>
+          )}
         </ScalePressable>
       ))}
     </View>

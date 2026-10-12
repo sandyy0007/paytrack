@@ -1,5 +1,5 @@
 import { StyleSheet, Text, View } from 'react-native';
-import { colors, fonts, radius, space } from '@/theme/tokens';
+import { colors, fonts, radius, space, useIsLight } from '@/theme/tokens';
 import { categoryIcon, Icon } from './Icon';
 import { ScalePressable } from './ScalePressable';
 
@@ -18,16 +18,18 @@ export function CategoryChip({
   onPress?: () => void;
   compact?: boolean;
 }) {
+  const isLight = useIsLight();
   const content = (
     <View
       style={[
         styles.chip,
+        isLight && !selected && { backgroundColor: '#FFFFFF', borderColor: '#CBD5E1' },
         compact && styles.chipCompact,
         selected && { borderColor: color, backgroundColor: `${color}22` },
       ]}
     >
-      <Icon name={categoryIcon(icon)} size={compact ? 13 : 15} color={selected ? color : colors.textSecondary} />
-      <Text style={[styles.text, compact && styles.textCompact, selected && { color: colors.text }]}>{name}</Text>
+      <Icon name={categoryIcon(icon)} size={compact ? 13 : 15} color={selected ? color : (isLight ? '#475569' : colors.textSecondary)} />
+      <Text style={[styles.text, isLight && { color: '#475569' }, compact && styles.textCompact, selected && { color: isLight ? '#1A1A1A' : colors.text }]}>{name}</Text>
       {selected ? <Icon name="checkmark" size={compact ? 12 : 14} color={color} /> : null}
     </View>
   );
@@ -40,10 +42,11 @@ export function CategoryChip({
 }
 
 export function FilterChip({ label, selected, onPress, count }: { label: string; selected: boolean; onPress: () => void; count?: number }) {
+  const isLight = useIsLight();
   return (
     <ScalePressable onPress={onPress} hapticStyle="select" accessibilityRole="tab" accessibilityState={{ selected }} accessibilityLabel={label}>
-      <View style={[styles.filter, selected && styles.filterOn]}>
-        <Text style={[styles.filterText, selected && { color: colors.onPrimary }]}>{label}{count != null ? ` · ${count}` : ''}</Text>
+      <View style={[styles.filter, isLight && !selected && { backgroundColor: '#FFFFFF', borderColor: '#CBD5E1' }, selected && styles.filterOn]}>
+        <Text style={[styles.filterText, isLight && !selected && { color: '#475569' }, selected && { color: colors.onPrimary }]}>{label}{count != null ? ` · ${count}` : ''}</Text>
       </View>
     </ScalePressable>
   );

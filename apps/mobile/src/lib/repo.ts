@@ -21,9 +21,25 @@ type Row = Record<string, any>;
 export interface LocalExpense extends Expense {
   syncState: 'pending' | 'synced' | 'error';
   syncError: string | null;
+  rawQrPayload?: string | null;
 }
 
 export function rowToExpense(r: Row): LocalExpense {
+  let rawQrPayload: string | null = null;
+  if (r.qr_payload) {
+    const trimmed = typeof r.qr_payload === 'string' ? r.qr_payload.trim() : '';
+    if (trimmed.toLowerCase().startsWith('upi:')) {
+      rawQrPayload = trimmed;
+    } else {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (parsed && typeof parsed === 'object' && typeof parsed.raw === 'string' && parsed.raw.trim().toLowerCase().startsWith('upi:')) {
+          rawQrPayload = parsed.raw.trim();
+        }
+      } catch {}
+    }
+  }
+
   return {
     id: r.id, expenseCode: r.expense_code, userId: r.user_id, amountPaise: r.amount_paise, currency: 'INR',
     payeeName: r.payee_name, upiId: r.upi_id, reason: r.reason, category: r.category, status: r.status,
@@ -31,6 +47,7 @@ export function rowToExpense(r: Row): LocalExpense {
     qrSource: r.qr_source, qrPayload: r.qr_payload, notes: r.notes, createdAt: r.created_at, expenseDate: r.expense_date,
     paymentInitiatedAt: r.payment_initiated_at, paymentCompletedAt: r.payment_completed_at, updatedAt: r.updated_at,
     deletedAt: r.deleted_at, syncState: r.sync_state, syncError: r.sync_error,
+    rawQrPayload,
     transactionId: r.transaction_id ?? null,
     approvalReference: r.approval_reference ?? null,
     responseCode: r.response_code ?? null,
@@ -121,6 +138,7 @@ export async function createExpense(input: NewExpenseInput): Promise<LocalExpens
     mode: baseMode,
     intendedAmountPaise: input.amountPaise,
     financialType: finType,
+    rawQrPayload,
   };
   const nextStatus: ExpenseStatus = input.paymentMethod === 'UPI' ? 'PENDING_PAYMENT' : 'PAID';
   const { expense: moved, event } = applyTransition(base, { to: nextStatus, at, eventId: uuid() });

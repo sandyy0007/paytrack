@@ -3,6 +3,7 @@ import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSettings } from '@/lib/settings';
 import { colors, fonts, space } from '@/theme/tokens';
 import { FloatingPayButton } from './FloatingPayButton';
 import { Icon, type IconName } from './Icon';
@@ -22,12 +23,14 @@ export const TAB_CONTENT_INSET = TAB_BAR_HEIGHT + 88;
 
 export function TabBar({ state, navigation }: BottomTabBarProps) {
   const insets = useSafeAreaInsets();
+  const themeMode = useSettings((s) => s.themeMode);
+  const isLight = themeMode === 'light';
   return (
-    <View style={[styles.wrap, { paddingBottom: insets.bottom }]} pointerEvents="box-none">
+    <View style={[styles.wrap, { paddingBottom: insets.bottom }, isLight && { borderTopColor: '#E2E8F0' }]} pointerEvents="box-none">
       <View style={styles.fab} pointerEvents="box-none">
         <FloatingPayButton onPress={() => router.push('/pay')} />
       </View>
-      <LinearGradient colors={['#0A0E13', '#05070A']} style={StyleSheet.absoluteFill} />
+      <LinearGradient colors={isLight ? ['#FFFFFF', '#F8FAFC'] : ['#0A0E13', '#05070A']} style={StyleSheet.absoluteFill} />
       <View style={styles.bar} accessibilityRole="tablist">
         {state.routes.map((route, i) => {
           const meta = TABS[route.name];
@@ -46,8 +49,8 @@ export function TabBar({ state, navigation }: BottomTabBarProps) {
               }}
               style={styles.tab}
             >
-              <Icon name={focused ? meta.active : meta.icon} size={23} color={focused ? colors.primary : colors.textMuted} />
-              <Text style={[styles.label, focused && { color: colors.text }]} numberOfLines={1}>{meta.label}</Text>
+              <Icon name={focused ? meta.active : meta.icon} size={23} color={focused ? colors.primary : isLight ? '#64748B' : colors.textMuted} />
+              <Text style={[styles.label, focused && { color: isLight ? '#0F172A' : colors.text }, isLight && !focused && { color: '#64748B' }]} numberOfLines={1}>{meta.label}</Text>
               {focused ? <View style={styles.indicator} /> : null}
             </ScalePressable>
           );

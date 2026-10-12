@@ -1,6 +1,6 @@
 import { forwardRef, useState } from 'react';
 import { StyleSheet, Text, TextInput, View, type TextInputProps } from 'react-native';
-import { colors, fonts, radius, space, type } from '@/theme/tokens';
+import { colors, fonts, radius, space, type, useIsLight } from '@/theme/tokens';
 
 interface Props extends TextInputProps {
   label: string;
@@ -10,21 +10,34 @@ interface Props extends TextInputProps {
 
 export const TextField = forwardRef<TextInput, Props>(function TextField({ label, error, hint, style, onFocus, onBlur, ...rest }, ref) {
   const [focused, setFocused] = useState(false);
+  const isLight = useIsLight();
+
   return (
     <View style={{ gap: 6 }}>
-      <Text style={type.label}>{label}</Text>
+      <Text style={[type.label, isLight && { color: '#475569' }]}>{label}</Text>
       <TextInput
         ref={ref}
-        placeholderTextColor={colors.textMuted}
+        placeholderTextColor={isLight ? '#64748B' : colors.textMuted}
         selectionColor={colors.primary}
         accessibilityLabel={label}
         accessibilityHint={error ?? hint}
         onFocus={(e) => { setFocused(true); onFocus?.(e); }}
         onBlur={(e) => { setFocused(false); onBlur?.(e); }}
-        style={[styles.input, focused && styles.focused, !!error && styles.errored, style]}
+        style={[
+          styles.input,
+          isLight && { backgroundColor: '#FFFFFF', borderColor: '#CBD5E1', color: '#1A1A1A' },
+          focused && styles.focused,
+          focused && isLight && { borderColor: colors.primary, backgroundColor: '#FFFFFF' },
+          !!error && styles.errored,
+          style,
+        ]}
         {...rest}
       />
-      {error ? <Text style={[type.caption, { color: colors.error }]} accessibilityLiveRegion="polite">{error}</Text> : hint ? <Text style={type.caption}>{hint}</Text> : null}
+      {error ? (
+        <Text style={[type.caption, { color: colors.error }]} accessibilityLiveRegion="polite">{error}</Text>
+      ) : hint ? (
+        <Text style={[type.caption, isLight && { color: '#64748B' }]}>{hint}</Text>
+      ) : null}
     </View>
   );
 });

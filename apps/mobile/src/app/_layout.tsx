@@ -24,9 +24,15 @@ export default function RootLayout() {
   const [bootError, setBootError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
 
+  const themeMode = useSettings((s) => s.themeMode);
+  const isLight = themeMode === 'light';
   const appLockEnabled = useSettings((s) => s.appLockEnabled);
   const appLockPin = useSettings((s) => s.appLockPin);
   const [isUnlocked, setIsUnlocked] = useState(false);
+
+  useEffect(() => {
+    void SystemUI.setBackgroundColorAsync(isLight ? '#F8FAFC' : colors.bg).catch(() => undefined);
+  }, [isLight]);
 
   useEffect(() => {
     bootstrap()
@@ -55,14 +61,14 @@ export default function RootLayout() {
     if (done) void SplashScreen.hideAsync().catch(() => undefined);
   }, [done]);
 
-  if (!done) return <View style={{ flex: 1, backgroundColor: colors.bg }} />;
+  if (!done) return <View style={{ flex: 1, backgroundColor: isLight ? '#F8FAFC' : colors.bg }} />;
 
   return (
-    <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.bg }}>
+    <GestureHandlerRootView style={{ flex: 1, backgroundColor: isLight ? '#F8FAFC' : colors.bg }}>
       <SafeAreaProvider>
-        <StatusBar style="light" />
+        <StatusBar style={isLight ? 'dark' : 'light'} />
         {bootError ? (
-          <View style={{ flex: 1, justifyContent: 'center', padding: 24, backgroundColor: colors.bg }}>
+          <View style={{ flex: 1, justifyContent: 'center', padding: 24, backgroundColor: isLight ? '#F8FAFC' : colors.bg }}>
             <ErrorState title="PayTrack couldn't start" message="Your saved data is safe on this device. Please try again." onRetry={() => { setBootError(null); setAttempt((a) => a + 1); }} />
             <Text style={{ color: colors.textMuted, textAlign: 'center', fontSize: 11 }}>{bootError}</Text>
           </View>
@@ -70,7 +76,7 @@ export default function RootLayout() {
           <Stack
             screenOptions={{
               headerShown: false,
-              contentStyle: { backgroundColor: colors.bg },
+              contentStyle: { backgroundColor: isLight ? '#F8FAFC' : colors.bg },
               animation: 'slide_from_right',
               animationDuration: 260,
             }}
